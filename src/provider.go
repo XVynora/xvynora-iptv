@@ -12,7 +12,11 @@ import (
 )
 
 // fileType: Welcher Dateityp soll aktualisiert werden (m3u, hdhr, xml) | fileID: Update einer bestimmten Datei (Provider ID)
+// XVynora built-in IPTV-org source.
+const IPTVOrgM3U = "https://iptv-org.github.io/iptv/index.m3u"
+
 func getProviderData(fileType, fileID string) (err error) {
+
 
 	var fileExtension, serverFileName string
 	var body = make([]byte, 0)
