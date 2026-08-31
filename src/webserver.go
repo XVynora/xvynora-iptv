@@ -41,6 +41,8 @@ func StartWebserver() (err error) {
 	http.HandleFunc("/ppv/enable", enablePPV)
 	http.HandleFunc("/ppv/disable", disablePPV)
 	http.HandleFunc("/auto/", Auto)
+	http.HandleFunc("/iptv/", XVynoraIPTVUI)
+	http.HandleFunc("/xvynora/api/", XVynoraIPTVAPI)
 
 	systemMutex.Lock()
 	ips := len(System.IPAddressesV4) + len(System.IPAddressesV6) - 1
@@ -134,11 +136,11 @@ func Stream(w http.ResponseWriter, r *http.Request) {
 
 	systemMutex.Lock()
 	forceHttps := Settings.ForceHttps
-    noStreamHttps := Settings.ExcludeStreamHttps
+	noStreamHttps := Settings.ExcludeStreamHttps
 	systemMutex.Unlock()
 
 	// Dont Change Source M3Us to use HTTPs when forceHttps set and Exclude Streams from https
-    if forceHttps && noStreamHttps == false {
+	if forceHttps && noStreamHttps == false {
 		u, err := url.Parse(streamInfo.URL)
 		if err == nil {
 			u.Scheme = "https"
@@ -1016,6 +1018,103 @@ func API(w http.ResponseWriter, r *http.Request) {
 
 	case "update.xmltv":
 		err = getProviderData("xmltv", "")
+		if err != nil {
+			break
+		}
+
+		buildXEPG(false)
+
+	case "iptvorg.sources":
+		response.Data = IPTVOrgGetSources()
+
+	case "iptvorg.status":
+		status := make([]map[string]interface{}, 0)
+
+		for _, source := range IPTVOrgGetSources() {
+			status = append(status, map[string]interface{}{
+				"id":       source.ID,
+				"name":     source.Name,
+				"type":     source.Type,
+				"url":      source.URL,
+				"category": source.Category,
+				"imported": IPTVOrgProviderExists(source.URL),
+			})
+		}
+
+		response.Data = status
+
+	case "iptvorg.import":
+		var req map[string]interface{}
+
+		if err = json.Unmarshal(b, &req); err != nil {
+			break
+		}
+
+		sourceID, ok := req["source"].(string)
+		if !ok || sourceID == "" {
+			err = errors.New("missing IPTV-org source")
+			break
+		}
+
+		provider, importErr := IPTVOrgAddProvider(sourceID)
+		if importErr != nil {
+			err = importErr
+			break
+		}
+
+		providerID, ok := provider["id.provider"].(string)
+		if !ok || providerID == "" {
+			err = errors.New("invalid IPTV-org provider ID")
+			break
+		}
+
+		err = getProviderData("m3u", providerID)
+		if err != nil {
+			break
+		}
+
+		err = buildDatabaseDVR()
+		if err != nil {
+			break
+		}
+
+		buildXEPG(false)
+
+		response.Data = provider
+
+	case "iptvorg.update":
+		err = getProviderData("m3u", "")
+
+		if err != nil {
+			break
+		}
+
+		err = buildDatabaseDVR()
+		if err != nil {
+			break
+		}
+
+		buildXEPG(false)
+
+	case "iptvorg.remove":
+		var req map[string]interface{}
+
+		if err = json.Unmarshal(b, &req); err != nil {
+			break
+		}
+
+		sourceID, ok := req["source"].(string)
+		if !ok || sourceID == "" {
+			err = errors.New("missing IPTV-org source")
+			break
+		}
+
+		err = IPTVOrgRemoveProvider(sourceID)
+		if err != nil {
+			break
+		}
+
+		err = buildDatabaseDVR()
 		if err != nil {
 			break
 		}

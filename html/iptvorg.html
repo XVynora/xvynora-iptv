@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XVynora IPTV</title>
+<link rel="stylesheet" href="/web/iptvorg.css">
+</head>
+<body>
+<div class="xv-app">
+
+<header class="xv-header">
+  <div>
+    <div class="xv-brand">XVYNORA</div>
+    <h1>Live TV</h1>
+    <p id="subtitle">Your channels, all in one place.</p>
+  </div>
+  <div class="xv-search">
+    <span>⌕</span>
+    <input id="channelSearch" type="search" placeholder="Search channels">
+  </div>
+</header>
+
+<nav class="xv-tabs" id="sourceTabs">
+  <button class="active" data-source="all">All</button>
+  <button data-source="uk">🇬🇧 United Kingdom</button>
+  <button data-source="pk">🇵🇰 Pakistan</button>
+  <button data-source="sports">⚽ Sports</button>
+  <button data-source="sky">Sky Sports</button>
+</nav>
+
+<main>
+  <section>
+    <div class="xv-section-title">
+      <h2>Sources</h2>
+      <span id="sourceCount"></span>
+    </div>
+    <div id="sources" class="xv-source-grid"></div>
+  </section>
+
+  <section>
+    <div class="xv-section-title">
+      <h2>Channels</h2>
+      <span id="channelCount"></span>
+    </div>
+    <div id="channels" class="xv-channel-grid">
+      <div class="xv-loading">Loading channels…</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="xv-toast"></div>
+
+</div>
+<script src="/web/iptvorg.js"></script>
+</body>
+</html>
