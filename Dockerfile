@@ -53,7 +53,7 @@ ENV THREADFIN_BIN=/home/threadfin/bin \
     THREADFIN_USER=threadfin \
     THREADFIN_BRANCH=main \
     THREADFIN_DEBUG=0 \
-    THREADFIN_PORT=34400 \
+    THREADFIN_PORT=10000 \
     THREADFIN_LOG=/var/log/threadfin.log \
     THREADFIN_BIND_IP_ADDRESS=0.0.0.0 \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/threadfin/bin \
@@ -103,6 +103,6 @@ RUN chmod +rx $THREADFIN_BIN/threadfin
 VOLUME $THREADFIN_CONF
 VOLUME $THREADFIN_TEMP
 
-EXPOSE $THREADFIN_PORT
+EXPOSE 10000
 
-ENTRYPOINT ["sh", "-c", "${THREADFIN_BIN}/threadfin -port=${THREADFIN_PORT} -bind=${THREADFIN_BIND_IP_ADDRESS} -config=${THREADFIN_CONF} -debug=${THREADFIN_DEBUG}"]
+ENTRYPOINT ["sh", "-c", "${THREADFIN_BIN}/threadfin -port=${PORT:-10000} -bind=0.0.0.0 -config=${THREADFIN_CONF} -debug=${THREADFIN_DEBUG}"]
