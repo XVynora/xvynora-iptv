@@ -2,56 +2,864 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>XVynora IPTV</title>
-<link rel="stylesheet" href="/web/iptvorg.css">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>XVYNORA TV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+:root{
+ --bg:#050506;
+ --panel:rgba(28,28,32,.72);
+ --glass:rgba(255,255,255,.09);
+ --glass2:rgba(255,255,255,.14);
+ --line:rgba(255,255,255,.16);
+ --text:#fff;
+ --muted:#a5a5ad;
+ --accent:#fff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}
+button,input,select{font:inherit}
+button{color:inherit}
+#ambient{
+ position:fixed;inset:-20%;
+ z-index:-2;
+ background:
+ radial-gradient(circle at 20% 30%,rgba(70,90,150,.22),transparent 35%),
+ radial-gradient(circle at 80% 60%,rgba(100,50,130,.18),transparent 35%),
+ #050506;
+ filter:blur(70px);
+ transition:background 1s ease;
+}
+#app{height:100%;display:flex;flex-direction:column}
+header{
+ height:82px;
+ flex:none;
+ display:flex;
+ align-items:center;
+ gap:28px;
+ padding:0 42px;
+ position:relative;
+ z-index:20;
+ background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent);
+}
+.logo{font-weight:800;letter-spacing:-1.5px;font-size:25px}
+.logo span{opacity:.45}
+nav{display:flex;gap:7px}
+nav button,.glass-btn{
+ border:1px solid transparent;
+ background:transparent;
+ padding:11px 17px;
+ border-radius:18px;
+ cursor:pointer;
+ color:#aaa;
+ transition:.2s;
+}
+nav button:hover,nav button.active,.glass-btn:hover{
+ background:var(--glass2);
+ color:#fff;
+ border-color:var(--line);
+ backdrop-filter:blur(25px) saturate(180%);
+}
+.search{
+ margin-left:auto;
+ width:310px;
+ display:flex;
+ align-items:center;
+ gap:10px;
+ padding:11px 15px;
+ border:1px solid var(--line);
+ border-radius:18px;
+ background:rgba(255,255,255,.07);
+ backdrop-filter:blur(25px);
+}
+.search input{
+ width:100%;border:0;outline:0;background:transparent;color:white
+}
+.search input::placeholder{color:#888}
+#hero{
+ position:relative;
+ min-height:285px;
+ flex:none;
+ margin:-82px 0 0;
+ padding:145px 48px 30px;
+ display:flex;
+ align-items:flex-end;
+ overflow:hidden;
+}
+#heroBg{
+ position:absolute;inset:0;
+ background-position:center;
+ background-size:cover;
+ opacity:.42;
+ filter:saturate(1.1);
+ transition:opacity .5s,background-image .5s;
+}
+#hero:after{
+ content:"";position:absolute;inset:0;
+ background:linear-gradient(to bottom,rgba(5,5,6,.15),#050506 92%);
+}
+.hero-content{position:relative;z-index:2;max-width:700px}
+.eyebrow{font-size:13px;color:#bbb;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px}
+h1{font-size:42px;line-height:1;margin:0 0 12px;letter-spacing:-2px}
+#heroDesc{color:#bbb;line-height:1.5;max-width:650px}
+.hero-actions{display:flex;gap:10px;margin-top:20px}
+.primary{
+ background:#fff;color:#000!important;border:0;padding:12px 20px;border-radius:16px;font-weight:700;cursor:pointer
+}
+.content{
+ flex:1;
+ min-height:0;
+ overflow:hidden;
+ padding:5px 42px 35px;
+}
+.toolbar{
+ display:flex;align-items:center;gap:10px;margin-bottom:16px
+}
+.toolbar h2{font-size:22px;margin:0;margin-right:auto}
+select,.filter{
+ background:rgba(255,255,255,.08);
+ border:1px solid var(--line);
+ color:#ddd;
+ border-radius:13px;
+ padding:9px 12px;
+ outline:0;
+}
+#grid{
+ height:100%;
+ overflow:auto;
+ display:grid;
+ grid-template-columns:repeat(auto-fill,minmax(190px,1fr));
+ grid-auto-rows:170px;
+ gap:18px;
+ padding:10px 8px 100px 5px;
+ scroll-behavior:smooth;
+ scrollbar-width:none;
+}
+#grid::-webkit-scrollbar{display:none}
+.card{
+ position:relative;
+ min-width:0;
+ border-radius:22px;
+ overflow:hidden;
+ background:linear-gradient(145deg,rgba(255,255,255,.13),rgba(255,255,255,.035));
+ border:1px solid rgba(255,255,255,.12);
+ box-shadow:inset 0 1px 1px rgba(255,255,255,.25);
+ cursor:pointer;
+ transition:transform .25s cubic-bezier(.175,.885,.32,1.275),box-shadow .25s;
+ outline:none;
+}
+.card:hover,.card:focus{
+ transform:scale(1.075) translateZ(0);
+ z-index:5;
+ box-shadow:0 25px 55px rgba(0,0,0,.7),0 0 0 3px #fff;
+}
+.card img{
+ width:100%;height:100%;object-fit:contain;padding:28px;
+ background:rgba(0,0,0,.28);
+}
+.card-bottom{
+ position:absolute;left:0;right:0;bottom:0;
+ padding:35px 13px 12px;
+ background:linear-gradient(transparent,rgba(0,0,0,.88));
+}
+.card-title{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-meta{font-size:10px;color:#aaa;margin-top:4px}
+.status{
+ position:absolute;top:10px;right:10px;
+ width:9px;height:9px;border-radius:50%;
+ background:#777;box-shadow:0 0 12px currentColor
+}
+.status.online{background:#32d74b;color:#32d74b}
+.status.dead{background:#ff453a;color:#ff453a}
+.status.unknown{background:#ffd60a;color:#ffd60a}
+.badge{
+ position:absolute;top:9px;left:9px;
+ background:rgba(0,0,0,.55);
+ border:1px solid rgba(255,255,255,.14);
+ border-radius:9px;padding:4px 6px;font-size:9px
+}
+#player{
+ position:fixed;inset:0;background:#000;z-index:100;
+ display:none;
+}
+#video{width:100%;height:100%;object-fit:contain;background:#000}
+.player-top,.player-bottom{
+ position:absolute;left:0;right:0;padding:24px 35px;
+ display:flex;align-items:center;gap:12px;
+ background:linear-gradient(to bottom,rgba(0,0,0,.8),transparent);
+}
+.player-top{top:0}
+.player-bottom{bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.9));padding-top:70px}
+.player-title{font-size:20px;font-weight:700;margin-right:auto}
+.player-control{
+ width:48px;height:48px;border-radius:50%;
+ border:1px solid var(--line);
+ background:rgba(255,255,255,.11);
+ backdrop-filter:blur(25px);
+ display:grid;place-items:center;cursor:pointer
+}
+.player-control:hover,.player-control:focus{background:#fff;color:#000;outline:0}
+#info{
+ position:fixed;right:20px;top:90px;width:310px;
+ z-index:110;display:none;
+ padding:20px;border:1px solid var(--line);
+ border-radius:24px;background:rgba(20,20,24,.82);
+ backdrop-filter:blur(35px);
+}
+.info-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08);font-size:12px}
+.info-row span:last-child{color:#aaa}
+#drawer{
+ position:fixed;right:0;top:0;bottom:0;width:380px;z-index:120;
+ transform:translateX(100%);
+ transition:.3s;
+ background:rgba(18,18,21,.86);
+ border-left:1px solid var(--line);
+ backdrop-filter:blur(35px);
+ padding:30px 20px;
+ overflow:auto;
+}
+#drawer.open{transform:translateX(0)}
+.drawer-title{font-size:22px;font-weight:700;margin-bottom:20px}
+.drawer-item{
+ display:flex;gap:12px;align-items:center;padding:12px;border-radius:15px;cursor:pointer
+}
+.drawer-item:hover{background:var(--glass2)}
+.drawer-item img{width:54px;height:42px;object-fit:contain}
+#loading{
+ position:fixed;inset:0;z-index:200;background:#050506;
+ display:grid;place-items:center;
+ transition:opacity .35s
+}
+.loader{text-align:center;color:#aaa}
+.spinner{width:38px;height:38px;border:3px solid #333;border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;margin:auto auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{grid-column:1/-1;color:#888;padding:60px;text-align:center}
+.toast{
+ position:fixed;left:50%;bottom:30px;transform:translateX(-50%);
+ padding:13px 18px;border-radius:15px;
+ background:rgba(30,30,35,.9);border:1px solid var(--line);
+ backdrop-filter:blur(30px);z-index:300;opacity:0;pointer-events:none;transition:.25s
+}
+.toast.show{opacity:1}
+@media(max-width:900px){
+ header{padding:0 18px}
+ nav{display:none}
+ .search{width:230px}
+ .content{padding:5px 18px}
+ #grid{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));grid-auto-rows:145px}
+}
+</style>
 </head>
 <body>
-<div class="xv-app">
+<div id="ambient"></div>
 
-<header class="xv-header">
-  <div>
-    <div class="xv-brand">XVYNORA</div>
-    <h1>Live TV</h1>
-    <p id="subtitle">Your channels, all in one place.</p>
-  </div>
-  <div class="xv-search">
-    <span>⌕</span>
-    <input id="channelSearch" type="search" placeholder="Search channels">
-  </div>
+<div id="loading">
+ <div class="loader">
+  <div class="spinner"></div>
+  <div id="loadingText">Loading live channels…</div>
+ </div>
+</div>
+
+<div id="app">
+<header>
+ <div class="logo">XVYNORA<span> TV</span></div>
+ <nav>
+  <button class="active" data-view="home">Home</button>
+  <button data-view="favorites">Favorites</button>
+  <button data-view="uk">🇬🇧 UK</button>
+  <button data-view="pakistan">🇵🇰 Pakistan</button>
+  <button data-view="sports">Sports</button>
+ </nav>
+ <div class="search">
+  <i data-lucide="search" size="17"></i>
+  <input id="search" autocomplete="off" placeholder="Search channels">
+ </div>
 </header>
 
-<nav class="xv-tabs" id="sourceTabs">
-  <button class="active" data-source="all">All</button>
-  <button data-source="uk">🇬🇧 United Kingdom</button>
-  <button data-source="pk">🇵🇰 Pakistan</button>
-  <button data-source="sports">⚽ Sports</button>
-  <button data-source="sky">Sky Sports</button>
-</nav>
+<section id="hero">
+ <div id="heroBg"></div>
+ <div class="hero-content">
+  <div class="eyebrow" id="heroEyebrow">LIVE TELEVISION</div>
+  <h1 id="heroTitle">XVYNORA TV</h1>
+  <div id="heroDesc">Loading real channel data…</div>
+  <div class="hero-actions">
+   <button class="primary" id="watchHero">▶ Watch</button>
+   <button class="glass-btn" id="favHero">☆ Favorite</button>
+  </div>
+ </div>
+</section>
 
-<main>
-  <section>
-    <div class="xv-section-title">
-      <h2>Sources</h2>
-      <span id="sourceCount"></span>
-    </div>
-    <div id="sources" class="xv-source-grid"></div>
-  </section>
-
-  <section>
-    <div class="xv-section-title">
-      <h2>Channels</h2>
-      <span id="channelCount"></span>
-    </div>
-    <div id="channels" class="xv-channel-grid">
-      <div class="xv-loading">Loading channels…</div>
-    </div>
-  </section>
+<main class="content">
+ <div class="toolbar">
+  <h2 id="sectionTitle">Live Channels</h2>
+  <select id="category"><option value="">All categories</option></select>
+  <select id="country"><option value="">All countries</option></select>
+  <select id="quality"><option value="">Any quality</option><option>2160p</option><option>1080p</option><option>720p</option><option>576p</option><option>480p</option></select>
+  <button class="glass-btn" id="hideBad">Working only</button>
+ </div>
+ <div id="grid"></div>
 </main>
-
-<div id="toast" class="xv-toast"></div>
-
 </div>
-<script src="/web/iptvorg.js"></script>
+
+<div id="player">
+ <video id="video" playsinline controls></video>
+ <div class="player-top">
+  <div class="player-title" id="playerTitle"></div>
+  <button class="player-control" id="playerInfo" title="Stream information"><i data-lucide="info"></i></button>
+  <button class="player-control" id="playerDrawer" title="Channels"><i data-lucide="list"></i></button>
+  <button class="player-control" id="playerPiP" title="Picture in Picture"><i data-lucide="picture-in-picture"></i></button>
+  <button class="player-control" id="playerClose" title="Close"><i data-lucide="x"></i></button>
+ </div>
+ <div class="player-bottom">
+  <div id="playerStatus">Connecting…</div>
+  <div style="margin-left:auto"></div>
+  <select id="level"><option value="-1">Auto</option></select>
+ </div>
+</div>
+
+<div id="info">
+ <div style="font-size:18px;font-weight:700;margin-bottom:12px">Stream information</div>
+ <div class="info-row"><span>Channel</span><span id="iChannel">—</span></div>
+ <div class="info-row"><span>Quality</span><span id="iQuality">—</span></div>
+ <div class="info-row"><span>Stream</span><span id="iStream">—</span></div>
+ <div class="info-row"><span>HLS</span><span id="iHls">—</span></div>
+ <div class="info-row"><span>EPG</span><span id="iEpg">—</span></div>
+ <div class="info-row"><span>Status</span><span id="iStatus">—</span></div>
+</div>
+
+<div id="drawer">
+ <div class="drawer-title">Channel Switcher</div>
+ <div id="drawerList"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+'use strict';
+
+const API='https://iptv-org.github.io/api/';
+const DATA={
+ channels:API+'channels.json',
+ streams:API+'streams.json',
+ feeds:API+'feeds.json',
+ logos:API+'logos.json',
+ guides:API+'guides.json',
+ categories:API+'categories.json',
+ countries:API+'countries.json'
+};
+
+const state={
+ channels:[],
+ streams:[],
+ feeds:[],
+ logos:[],
+ guides:[],
+ categories:[],
+ countries:[],
+ items:[],
+ filtered:[],
+ active:null,
+ hero:null,
+ hls:null,
+ favorites:new Set(JSON.parse(localStorage.getItem('xvynora-favorites')||'[]')),
+ view:'home',
+ hideBad:false,
+ currentSearch:'',
+ activeStreamIndex:0
+};
+
+const $=s=>document.querySelector(s);
+
+function toast(message){
+ const t=$('#toast');
+ t.textContent=message;
+ t.classList.add('show');
+ clearTimeout(window.__toast);
+ window.__toast=setTimeout(()=>t.classList.remove('show'),2600);
+}
+
+function esc(s){
+ return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function norm(s){
+ return String(s||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+}
+
+async function get(url){
+ const r=await fetch(url,{cache:'no-cache'});
+ if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+ return r.json();
+}
+
+function bestLogo(channel,feed){
+ const matches=state.logos.filter(x=>x.channel===channel.id);
+ const exact=matches.find(x=>x.feed===feed);
+ const inUse=matches.find(x=>x.in_use);
+ return (exact||inUse||matches[0]||{}).url||'';
+}
+
+function channelCountry(c){
+ const x=state.countries.find(x=>x.code===c.country);
+ return x ? `${x.flag||''} ${x.name}`.trim() : c.country||'';
+}
+
+function buildItems(){
+ const channels=new Map(state.channels.map(c=>[c.id,c]));
+ const feeds=new Map(state.feeds.map(f=>[`${f.channel}|${f.id}`,f]));
+ const grouped=new Map();
+
+ for(const s of state.streams){
+  if(!s.channel || !s.url) continue;
+  const c=channels.get(s.channel);
+  if(!c || c.is_nsfw) continue;
+
+  const key=`${s.channel}|${s.feed||''}`;
+  if(!grouped.has(key)) grouped.set(key,{
+   channel:c,
+   feed:feeds.get(`${s.channel}|${s.feed||''}`)||null,
+   streams:[]
+  });
+  grouped.get(key).streams.push(s);
+ }
+
+ state.items=[...grouped.values()].map((x,i)=>{
+  const c=x.channel;
+  const sports=c.categories?.includes('sports')||norm(c.name).includes('sport');
+  const sky=norm(c.name).includes('sky sports')||norm(c.name).includes('sky sport');
+  return {
+   key:`${c.id}|${x.feed?.id||''}`,
+   id:c.id,
+   name:c.name,
+   altNames:c.alt_names||[],
+   country:c.country,
+   countryName:channelCountry(c),
+   categories:c.categories||[],
+   languages:x.feed?.languages||[],
+   feed:x.feed,
+   logo:bestLogo(c,x.feed?.id),
+   streams:x.streams.sort((a,b)=>{
+    const qa=parseQuality(a.quality),qb=parseQuality(b.quality);
+    return qb-qa;
+   }),
+   sports,
+   sky,
+   guide:state.guides.find(g=>g.channel===c.id&&(!x.feed?.id||!g.feed||g.feed===x.feed.id))||null,
+   index:i
+  };
+ });
+}
+
+function parseQuality(q){
+ const m=String(q||'').match(/(\d{3,4})p/i);
+ return m?Number(m[1]):0;
+}
+
+function qualityLabel(item){
+ const q=item.streams.map(s=>parseQuality(s.quality)).sort((a,b)=>b-a)[0];
+ return q?`${q}p`:'LIVE';
+}
+
+function matchesView(item){
+ if(state.view==='favorites') return state.favorites.has(item.id);
+ if(state.view==='uk') return item.country==='GB';
+ if(state.view==='pakistan') return item.country==='PK';
+ if(state.view==='sports') return item.sports;
+ return true;
+}
+
+function matchesFilters(item){
+ if(!matchesView(item)) return false;
+
+ const q=state.currentSearch;
+ if(q){
+  const hay=norm([item.name,...item.altNames,item.country,...item.categories].join(' '));
+  if(!hay.includes(norm(q))) return false;
+ }
+
+ const cat=$('#category').value;
+ if(cat && !item.categories.includes(cat)) return false;
+
+ const country=$('#country').value;
+ if(country && item.country!==country) return false;
+
+ const quality=$('#quality').value;
+ if(quality && !item.streams.some(s=>String(s.quality||'').toLowerCase()===quality.toLowerCase())) return false;
+
+ if(state.hideBad && item.streams.every(s=>String(s.label||'').toLowerCase().includes('geo-blocked'))) return false;
+
+ return true;
+}
+
+function renderFilters(){
+ const cats=[...new Set(state.items.flatMap(x=>x.categories))].sort();
+ const countries=[...new Set(state.items.map(x=>x.country).filter(Boolean))].sort();
+
+ $('#category').innerHTML='<option value="">All categories</option>'+cats.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+ $('#country').innerHTML='<option value="">All countries</option>'+countries.map(code=>{
+  const c=state.countries.find(x=>x.code===code);
+  return `<option value="${esc(code)}">${esc(c?.flag||'')} ${esc(c?.name||code)}</option>`;
+ }).join('');
+}
+
+function render(){
+ state.filtered=state.items.filter(matchesFilters);
+
+ const grid=$('#grid');
+ if(!state.filtered.length){
+  grid.innerHTML='<div class="empty">No channels match your filters.</div>';
+  return;
+ }
+
+ const limit=250;
+ const visible=state.filtered.slice(0,limit);
+
+ grid.innerHTML=visible.map((x,i)=>`
+  <article class="card" tabindex="0" data-key="${esc(x.key)}">
+   <div class="status unknown"></div>
+   ${x.sky?'<div class="badge">SKY SPORTS</div>':''}
+   <img loading="lazy" src="${esc(x.logo)}" alt="" onerror="this.style.opacity=.2">
+   <div class="card-bottom">
+    <div class="card-title">${esc(x.name)}</div>
+    <div class="card-meta">${esc(x.countryName)} · ${esc(qualityLabel(x))}</div>
+   </div>
+  </article>
+ `).join('');
+
+ grid.querySelectorAll('.card').forEach(card=>{
+  card.addEventListener('click',()=>openChannel(card.dataset.key));
+  card.addEventListener('focus',()=>selectHero(card.dataset.key));
+  card.addEventListener('keydown',e=>{
+   if(e.key==='Enter'){e.preventDefault();openChannel(card.dataset.key)}
+  });
+ });
+}
+
+function selectHero(key){
+ const item=state.items.find(x=>x.key===key);
+ if(!item)return;
+ state.hero=item;
+
+ $('#heroTitle').textContent=item.name;
+ $('#heroEyebrow').textContent=[
+  item.countryName,
+  item.categories[0]||'Live TV',
+  qualityLabel(item)
+ ].filter(Boolean).join(' · ');
+
+ $('#heroDesc').textContent=[
+  item.feed?.name,
+  item.streams[0]?.title,
+  item.streams[0]?.label
+ ].filter(Boolean).join(' · ')||'Live television stream';
+
+ $('#heroBg').style.backgroundImage=item.logo?`url("${item.logo}")`:'none';
+ $('#favHero').textContent=state.favorites.has(item.id)?'★ Favorited':'☆ Favorite';
+
+ const rgb=colourFromString(item.id);
+ $('#ambient').style.background=`
+ radial-gradient(circle at 20% 30%,rgba(${rgb},.28),transparent 38%),
+ radial-gradient(circle at 80% 65%,rgba(${rgb},.18),transparent 40%),
+ #050506`;
+}
+
+function colourFromString(s){
+ let h=0;
+ for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))%360;
+ const a=document.createElement('canvas').getContext('2d');
+ a.fillStyle=`hsl(${h},65%,55%)`;
+ const m=a.fillStyle.match(/\d+/g);
+ if(m)return m.slice(0,3).join(',');
+ return '100,120,200';
+}
+
+function toggleFavorite(item){
+ if(state.favorites.has(item.id))state.favorites.delete(item.id);
+ else state.favorites.add(item.id);
+ localStorage.setItem('xvynora-favorites',JSON.stringify([...state.favorites]));
+ $('#favHero').textContent=state.favorites.has(item.id)?'★ Favorited':'☆ Favorite';
+ render();
+}
+
+function chooseStream(item,start=0){
+ const valid=item.streams.filter(s=>s.url);
+ return valid[start]||valid[0]||null;
+}
+
+async function openChannel(key){
+ const item=state.items.find(x=>x.key===key);
+ if(!item)return;
+
+ state.active=item;
+ state.activeStreamIndex=0;
+ $('#player').style.display='block';
+ $('#playerTitle').textContent=item.name;
+ $('#playerStatus').textContent='Connecting…';
+ $('#info').style.display='none';
+ $('#drawer').classList.remove('open');
+
+ await loadStream(item);
+}
+
+async function loadStream(item){
+ if(state.hls){state.hls.destroy();state.hls=null}
+
+ const stream=chooseStream(item,state.activeStreamIndex);
+ if(!stream){
+  $('#playerStatus').textContent='No playable stream';
+  return;
+ }
+
+ $('#iChannel').textContent=item.name;
+ $('#iQuality').textContent=stream.quality||'Unknown';
+ $('#iStream').textContent=stream.title||stream.url;
+ $('#iHls').textContent=/\.m3u8($|\?)/i.test(stream.url)?'HLS':'Native';
+ $('#iStatus').textContent=stream.label||'Unspecified';
+
+ const video=$('#video');
+ video.pause();
+ video.removeAttribute('src');
+ video.load();
+
+ const url=stream.url;
+
+ if(window.Hls && Hls.isSupported() && /\.m3u8($|\?)/i.test(url)){
+  const config={
+   enableWorker:true,
+   lowLatencyMode:true,
+   backBufferLength:90,
+   maxBufferLength:20,
+   maxMaxBufferLength:40,
+   maxBufferHole:.5,
+   highBufferWatchdogPeriod:2,
+   manifestLoadingTimeOut:8000,
+   manifestLoadingMaxRetry:3,
+   fragLoadingTimeOut:10000,
+   fragLoadingMaxRetry:4,
+   startLevel:-1
+  };
+
+  const hls=new Hls(config);
+  state.hls=hls;
+
+  hls.on(Hls.Events.MANIFEST_PARSED,()=>{
+   $('#playerStatus').textContent='Live';
+   populateLevels(hls);
+   video.play().catch(()=>{});
+  });
+
+  hls.on(Hls.Events.LEVEL_SWITCHED,(_,data)=>{
+   const level=hls.levels[data.level];
+   if(level){
+    $('#iQuality').textContent=level.height?`${level.height}p`:(stream.quality||'Auto');
+   }
+  });
+
+  hls.on(Hls.Events.ERROR,(_,data)=>{
+   if(!data.fatal)return;
+
+   $('#playerStatus').textContent='Stream error';
+
+   if(data.type===Hls.ErrorTypes.NETWORK_ERROR){
+    hls.startLoad();
+    return;
+   }
+
+   if(data.type===Hls.ErrorTypes.MEDIA_ERROR){
+    hls.recoverMediaError();
+    return;
+   }
+
+   failover(item);
+  });
+
+  hls.loadSource(url);
+  hls.attachMedia(video);
+ }else{
+  video.src=url;
+  video.addEventListener('loadedmetadata',()=>video.play().catch(()=>{}),{once:true});
+  video.addEventListener('playing',()=>$('#playerStatus').textContent='Live',{once:true});
+  video.addEventListener('error',()=>failover(item),{once:true});
+ }
+}
+
+function populateLevels(hls){
+ const select=$('#level');
+ select.innerHTML='<option value="-1">Auto</option>';
+ hls.levels.forEach((l,i)=>{
+  if(!l.height)return;
+  const o=document.createElement('option');
+  o.value=i;o.textContent=`${l.height}p`;
+  select.appendChild(o);
+ });
+}
+
+function failover(item){
+ if(state.activeStreamIndex+1<item.streams.length){
+  state.activeStreamIndex++;
+  toast(`Trying backup stream ${state.activeStreamIndex+1}/${item.streams.length}`);
+  loadStream(item);
+ }else{
+  $('#playerStatus').textContent='No working stream found';
+  toast('All available stream variants failed');
+ }
+}
+
+function closePlayer(){
+ if(state.hls){state.hls.destroy();state.hls=null}
+ const v=$('#video');
+ v.pause();v.removeAttribute('src');v.load();
+ $('#player').style.display='none';
+ $('#info').style.display='none';
+ $('#drawer').classList.remove('open');
+}
+
+function populateDrawer(){
+ $('#drawerList').innerHTML=state.filtered.slice(0,100).map(x=>`
+  <div class="drawer-item" data-key="${esc(x.key)}">
+   <img src="${esc(x.logo)}" onerror="this.style.opacity=.2">
+   <div>
+    <div style="font-weight:600">${esc(x.name)}</div>
+    <div style="font-size:11px;color:#888">${esc(x.countryName)} · ${esc(qualityLabel(x))}</div>
+   </div>
+  </div>
+ `).join('');
+
+ $('#drawerList').querySelectorAll('.drawer-item').forEach(x=>{
+  x.onclick=()=>openChannel(x.dataset.key);
+ });
+}
+
+function wire(){
+ $('#search').addEventListener('input',debounce(e=>{
+  state.currentSearch=e.target.value;
+  render();
+ },150));
+
+ ['category','country','quality'].forEach(id=>$('#'+id).addEventListener('change',render));
+
+ $('#hideBad').onclick=()=>{
+  state.hideBad=!state.hideBad;
+  $('#hideBad').textContent=state.hideBad?'All streams':'Working only';
+  $('#hideBad').classList.toggle('active',state.hideBad);
+  render();
+ };
+
+ document.querySelectorAll('nav button').forEach(btn=>{
+  btn.onclick=()=>{
+   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+   btn.classList.add('active');
+   state.view=btn.dataset.view;
+   $('#sectionTitle').textContent={
+    home:'Live Channels',
+    favorites:'Favorites',
+    uk:'UK Live TV',
+    pakistan:'Pakistan Live TV',
+    sports:'Sports'
+   }[state.view];
+   render();
+  };
+ });
+
+ $('#favHero').onclick=()=>state.hero&&toggleFavorite(state.hero);
+ $('#watchHero').onclick=()=>state.hero&&openChannel(state.hero.key);
+
+ $('#playerClose').onclick=closePlayer;
+
+ $('#playerInfo').onclick=()=>{
+  $('#info').style.display=$('#info').style.display==='block'?'none':'block';
+ };
+
+ $('#playerDrawer').onclick=()=>{
+  populateDrawer();
+  $('#drawer').classList.toggle('open');
+ };
+
+ $('#playerPiP').onclick=async()=>{
+  try{
+   if(document.pictureInPictureElement)await document.exitPictureInPicture();
+   else if(document.pictureInPictureEnabled)await $('#video').requestPictureInPicture();
+  }catch(e){toast('Picture-in-Picture unavailable')}
+ };
+
+ $('#level').onchange=e=>{
+  if(state.hls)state.hls.currentLevel=Number(e.target.value);
+ };
+
+ document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'||e.key==='Backspace'){
+   if($('#drawer').classList.contains('open')){
+    $('#drawer').classList.remove('open');
+    e.preventDefault();return;
+   }
+   if($('#player').style.display==='block'){
+    closePlayer();e.preventDefault();return;
+   }
+  }
+
+  if(e.key==='Enter' && document.activeElement?.classList.contains('card')){
+   openChannel(document.activeElement.dataset.key);
+  }
+ });
+}
+
+function debounce(fn,ms){
+ let t;
+ return (...args)=>{
+  clearTimeout(t);
+  t=setTimeout(()=>fn(...args),ms);
+ };
+}
+
+async function init(){
+ wire();
+
+ try{
+  $('#loadingText').textContent='Downloading channel catalogue…';
+
+  const [channels,streams,feeds,logos,guides,categories,countries]=await Promise.all([
+   get(DATA.channels),
+   get(DATA.streams),
+   get(DATA.feeds),
+   get(DATA.logos),
+   get(DATA.guides),
+   get(DATA.categories),
+   get(DATA.countries)
+  ]);
+
+  state.channels=channels;
+  state.streams=streams;
+  state.feeds=feeds;
+  state.logos=logos;
+  state.guides=guides;
+  state.categories=categories;
+  state.countries=countries;
+
+  buildItems();
+  renderFilters();
+
+  const gb=state.items.find(x=>x.country==='GB')||state.items[0];
+  if(gb)selectHero(gb.key);
+
+  render();
+
+  $('#loading').style.opacity='0';
+  setTimeout(()=>$('#loading').remove(),400);
+
+  toast(`${state.items.length.toLocaleString()} playable channel feeds loaded`);
+ }catch(err){
+  console.error(err);
+  $('#loadingText').innerHTML=
+   'Unable to load IPTV-org data.<br><small>'+esc(err.message)+'</small>';
+ }
+}
+
+if(window.lucide)lucide.createIcons();
+init();
+</script>
 </body>
 </html>

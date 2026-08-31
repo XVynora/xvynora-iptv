@@ -28,6 +28,7 @@ func StartWebserver() (err error) {
 	}
 	systemMutex.Unlock()
 
+	http.HandleFunc("/iptvorg.html", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "html/iptvorg.html") })
 	http.HandleFunc("/", Index)
 	http.HandleFunc("/stream/", Stream)
 	http.HandleFunc("/xmltv/", Threadfin)
