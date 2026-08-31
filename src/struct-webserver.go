@@ -160,6 +160,7 @@ type APIRequestStruct struct {
 
 // APIResponseStruct : Antwort an den Client (API)
 type APIResponseStruct struct {
+    Data             interface{} `json:"data,omitempty"`
 	EpgSource        string `json:"epg.source,omitempty"`
 	Error            string `json:"err,omitempty"`
 	Status           bool   `json:"status,required"`

@@ -52,7 +52,6 @@ func IPTVOrgGetSource(id string) (IPTVOrgSource, bool) {
 			return source, true
 		}
 	}
-
 	return IPTVOrgSource{}, false
 }
 
@@ -82,6 +81,65 @@ func IPTVOrgDownload(id string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// IPTVOrgImportSource adds an IPTV-ORG playlist to Threadfin's normal M3U
+// provider system, then lets the existing provider/database pipeline process it.
+func IPTVOrgImportSource(id string) error {
+	source, ok := IPTVOrgGetSource(id)
+	if !ok {
+		return fmt.Errorf("unknown IPTV-org source: %s", id)
+	}
+
+	for _, value := range Settings.Files.M3U {
+		if data, ok := value.(map[string]interface{}); ok {
+			if data["file.source"] == source.URL {
+				return fmt.Errorf("source already imported: %s", source.Name)
+			}
+		}
+	}
+
+	providerID := "M" + randomString(19)
+
+	provider := map[string]interface{}{
+		"id.provider":          providerID,
+		"name":                 source.Name,
+		"description":          source.Description,
+		"type":                 "m3u",
+		"file.Threadfin":       providerID + ".m3u",
+		"file.source":          source.URL,
+		"tuner":                1.0,
+		"http_proxy.ip":        "",
+		"http_proxy.port":      "",
+		"compatibility":        map[string]interface{}{},
+		"counter.error":        0.0,
+		"counter.download":     0.0,
+		"provider.availability": 100,
+	}
+
+	if Settings.Files.M3U == nil {
+		Settings.Files.M3U = make(map[string]interface{})
+	}
+
+	Settings.Files.M3U[providerID] = provider
+
+	if err := saveSettings(Settings); err != nil {
+		return err
+	}
+
+	if err := getProviderData("m3u", providerID); err != nil {
+		delete(Settings.Files.M3U, providerID)
+		_ = saveSettings(Settings)
+		return err
+	}
+
+	if err := buildDatabaseDVR(); err != nil {
+		return err
+	}
+
+	buildXEPG(false)
+
+	return nil
 }
 
 func IPTVOrgSourceJSON() ([]byte, error) {

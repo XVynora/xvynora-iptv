@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XVynora IPTV</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f1117;
+            color: #f5f7fa;
+        }
+
+        .xv-wrap {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 35px 25px 60px;
+        }
+
+        .xv-hero {
+            padding: 30px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, #171b27, #11141d);
+            border: 1px solid #292f3d;
+            margin-bottom: 25px;
+        }
+
+        .xv-hero h1 {
+            margin: 0 0 8px;
+            font-size: 32px;
+        }
+
+        .xv-hero p {
+            margin: 0;
+            color: #9da6b8;
+        }
+
+        .xv-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 18px;
+        }
+
+        .xv-card {
+            background: #171b24;
+            border: 1px solid #292f3d;
+            border-radius: 16px;
+            padding: 22px;
+            transition: transform .15s ease, border-color .15s ease;
+        }
+
+        .xv-card:hover {
+            transform: translateY(-2px);
+            border-color: #59657a;
+        }
+
+        .xv-card h2 {
+            margin: 0 0 8px;
+            font-size: 21px;
+        }
+
+        .xv-card p {
+            color: #9da6b8;
+            min-height: 42px;
+        }
+
+        .xv-type {
+            display: inline-block;
+            font-size: 12px;
+            color: #aab3c5;
+            background: #222735;
+            padding: 5px 9px;
+            border-radius: 8px;
+            margin-bottom: 14px;
+        }
+
+        .xv-button {
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            padding: 11px 15px;
+            background: #ffffff;
+            color: #11141a;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .xv-button:hover {
+            background: #e7eaf0;
+        }
+
+        .xv-button:disabled {
+            opacity: .55;
+            cursor: wait;
+        }
+
+        #xv-status {
+            margin-top: 20px;
+            padding: 13px 16px;
+            border-radius: 10px;
+            background: #171b24;
+            border: 1px solid #292f3d;
+            color: #aeb7c8;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="xv-wrap">
+
+    <div class="xv-hero">
+        <h1>XVynora IPTV</h1>
+        <p>Public IPTV sources powered by IPTV-ORG and integrated directly with Threadfin.</p>
+    </div>
+
+    <div id="xv-sources" class="xv-grid">
+        <div class="xv-card">Loading sources...</div>
+    </div>
+
+    <div id="xv-status"></div>
+
+</div>
+
+<script>
+async function loadSources() {
+    const container = document.getElementById("xv-sources");
+
+    try {
+        const response = await fetch("/api/iptvorg");
+        if (!response.ok) throw new Error("HTTP " + response.status);
+
+        const sources = await response.json();
+
+        container.innerHTML = "";
+
+        sources.forEach(source => {
+            const card = document.createElement("div");
+            card.className = "xv-card";
+
+            card.innerHTML = `
+                <span class="xv-type">${escapeHTML(source.type)}</span>
+                <h2>${escapeHTML(source.name)}</h2>
+                <p>${escapeHTML(source.description)}</p>
+                <button class="xv-button" onclick="importSource('${escapeJS(source.id)}', this)">
+                    Import channels
+                </button>
+            `;
+
+            container.appendChild(card);
+        });
+    } catch (error) {
+        container.innerHTML =
+            '<div class="xv-card">Unable to load IPTV sources.</div>';
+        showStatus("Failed to load IPTV sources: " + error.message);
+    }
+}
+
+async function importSource(id, button) {
+    button.disabled = true;
+    button.textContent = "Importing...";
+
+    showStatus("Downloading and processing channels...");
+
+    try {
+        const response = await fetch("/api/iptvorg", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                action: "import",
+                source: id
+            })
+        });
+
+        const text = await response.text();
+
+        if (!response.ok) {
+            throw new Error(text || ("HTTP " + response.status));
+        }
+
+        button.textContent = "Imported";
+        showStatus("Source imported successfully. Threadfin is rebuilding the channel database.");
+
+    } catch (error) {
+        button.disabled = false;
+        button.textContent = "Import channels";
+        showStatus("Import failed: " + error.message);
+    }
+}
+
+function showStatus(message) {
+    const status = document.getElementById("xv-status");
+    status.textContent = message;
+    status.style.display = "block";
+}
+
+function escapeHTML(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function escapeJS(value) {
+    return String(value).replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+}
+
+loadSources();
+</script>
+
+</body>
+</html>

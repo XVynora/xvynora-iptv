@@ -18,7 +18,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// IPTVOrgSourcesHandler exposes the available IPTV-org sources.
+func IPTVOrgSourcesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sources := IPTVOrgGetSources()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sources)
+}
+
 // StartWebserver : Startet den Webserver
+
 func StartWebserver() (err error) {
 	systemMutex.Lock()
 	port := Settings.Port
@@ -36,6 +50,12 @@ func StartWebserver() (err error) {
 	http.HandleFunc("/web/", Web)
 	http.HandleFunc("/download/", Download)
 	http.HandleFunc("/api/", API)
+	http.HandleFunc("/iptvorg/sources", IPTVOrgSourcesHandler)
+	http.HandleFunc("/api/iptvorg", IPTVOrgAPI)
+	http.HandleFunc("/xvynora-iptv", func(w http.ResponseWriter, r *http.Request) {
+        http.ServeFile(w, r, "html/xvynora-iptv.html")
+})
+
 	http.HandleFunc("/images/", Images)
 	http.HandleFunc("/data_images/", DataImages)
 	http.HandleFunc("/ppv/enable", enablePPV)
@@ -837,6 +857,59 @@ func Web(w http.ResponseWriter, r *http.Request) {
 }
 
 // API : API request /api/
+
+// IPTVOrgAPI exposes the XVynora IPTV-ORG integration.
+func IPTVOrgAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(IPTVOrgGetSources())
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"`
+		Source string `json:"source"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	switch req.Action {
+	case "sources":
+		_ = json.NewEncoder(w).Encode(IPTVOrgGetSources())
+		return
+
+	case "import":
+		if req.Source == "" {
+			http.Error(w, "missing source", http.StatusBadRequest)
+			return
+		}
+
+		if err := IPTVOrgImportSource(req.Source); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": true,
+			"source": req.Source,
+		})
+		return
+
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+}
+
 func API(w http.ResponseWriter, r *http.Request) {
 
 	/*
@@ -931,7 +1004,16 @@ func API(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("content-type", "application/json")
+	
+        // XVynora IPTV extension parameters.
+        // Kept separate from APIRequestStruct to preserve the original API.
+        var xvRequest map[string]interface{}
+        if err = json.Unmarshal(b, &xvRequest); err != nil {
+                httpStatusError(w, r, 400)
+                return
+        }
+
+w.Header().Set("content-type", "application/json")
 
 	if Settings.AuthenticationAPI == true {
 		var token string
@@ -1025,7 +1107,92 @@ func API(w http.ResponseWriter, r *http.Request) {
 	case "update.xepg":
 		buildXEPG(false)
 
-	default:
+	
+        case "iptvorg.sources":
+
+                response.Data = IPTVOrgGetSources()
+
+        case "iptvorg.import":
+
+                sourceID, ok := xvRequest["source"].(string)
+                if !ok || sourceID == "" {
+                        err = errors.New("missing IPTV-org source")
+                        break
+                }
+
+                source, ok := IPTVOrgGetSource(sourceID)
+                if !ok {
+                        err = errors.New("unknown IPTV-org source: " + sourceID)
+                        break
+                }
+
+                alreadyExists := false
+
+                for _, value := range Settings.Files.M3U {
+                        if data, ok := value.(map[string]interface{}); ok {
+                                if data["file.source"] == source.URL {
+                                        alreadyExists = true
+                                        break
+                                }
+                        }
+                }
+
+                if alreadyExists {
+                        err = errors.New("source already imported: " + source.Name)
+                        break
+                }
+
+                providerID := "M" + randomString(19)
+
+                provider := make(map[string]interface{})
+                provider["id.provider"] = providerID
+                provider["name"] = source.Name
+                provider["description"] = source.Description
+                provider["type"] = "m3u"
+                provider["file.Threadfin"] = providerID + ".m3u"
+                provider["file.source"] = source.URL
+                provider["tuner"] = float64(1)
+                provider["http_proxy.ip"] = ""
+                provider["http_proxy.port"] = ""
+                provider["last.update"] = ""
+                provider["compatibility"] = make(map[string]interface{})
+                provider["counter.error"] = float64(0)
+                provider["counter.download"] = float64(0)
+                provider["provider.availability"] = float64(100)
+
+                if Settings.Files.M3U == nil {
+                        Settings.Files.M3U = make(map[string]interface{})
+                }
+
+                Settings.Files.M3U[providerID] = provider
+
+                err = saveSettings(Settings)
+                if err != nil {
+                        break
+                }
+
+                err = getProviderData("m3u", providerID)
+                if err != nil {
+                        delete(Settings.Files.M3U, providerID)
+                        saveSettings(Settings)
+                        break
+                }
+
+                err = buildDatabaseDVR()
+                if err != nil {
+                        break
+                }
+
+                buildXEPG(false)
+
+                response.Data = map[string]interface{}{
+                        "status":   true,
+                        "source":   source.ID,
+                        "name":     source.Name,
+                        "provider": providerID,
+                }
+
+default:
 		err = errors.New(getErrMsg(5000))
 
 	}
