@@ -1,0 +1,24 @@
+{
+  "provider": "IPTV-org",
+  "base_url": "https://iptv-org.github.io/iptv",
+  "sources": [
+    {
+      "id": "uk",
+      "name": "🇬🇧 United Kingdom",
+      "type": "country",
+      "url": "https://iptv-org.github.io/iptv/countries/uk.m3u"
+    },
+    {
+      "id": "pk",
+      "name": "🇵🇰 Pakistan",
+      "type": "country",
+      "url": "https://iptv-org.github.io/iptv/countries/pk.m3u"
+    },
+    {
+      "id": "sports",
+      "name": "⚽ Sports",
+      "type": "category",
+      "url": "https://iptv-org.github.io/iptv/categories/sports.m3u"
+    }
+  ]
+}
