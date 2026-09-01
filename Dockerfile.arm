@@ -79,6 +79,7 @@ RUN apt-get update && \
 
 # Copy built binary from builder image
 COPY --from=builder /app/threadfin $THREADFIN_BIN/
+COPY --from=builder /app/html $THREADFIN_HOME/html
 RUN chmod +rx $THREADFIN_BIN/threadfin
 
 # Configure container volume mappings
