@@ -21,30 +21,55 @@ type XVynoraIPTVProgram struct {
 	Start       string  `json:"start"`
 	Stop        string  `json:"stop"`
 	Progress    float64 `json:"progress,omitempty"`
+	Source      string  `json:"source,omitempty"`
+}
+
+type XVynoraIPTVStreamView struct {
+	URL          string `json:"url"`
+	Feed         string `json:"feed,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	Country      string `json:"country,omitempty"`
+	Region       string `json:"region,omitempty"`
+	Language     string `json:"language,omitempty"`
+	Quality      string `json:"quality,omitempty"`
+	Availability string `json:"availability,omitempty"`
+	Referrer     string `json:"referrer,omitempty"`
+	UserAgent    string `json:"user_agent,omitempty"`
+	Health       string `json:"health"`
 }
 
 type XVynoraIPTVChannelView struct {
-	ID           string                 `json:"id"`
-	Title        string                 `json:"title"`
-	Name         string                 `json:"name"`
-	Stream       string                 `json:"stream"`
-	ThreadfinURL string                 `json:"threadfin_url,omitempty"`
-	Logo         string                 `json:"logo,omitempty"`
-	Group        string                 `json:"group"`
-	Category     string                 `json:"category"`
-	Country      string                 `json:"country,omitempty"`
-	Language     string                 `json:"language,omitempty"`
-	Quality      string                 `json:"quality,omitempty"`
-	Health       string                 `json:"health"`
-	Status       string                 `json:"status"`
-	Source       string                 `json:"source,omitempty"`
-	TvgID        string                 `json:"tvgId,omitempty"`
-	EPGID        string                 `json:"epg_id,omitempty"`
-	SkySports    bool                   `json:"sky_sports,omitempty"`
-	Description  string                 `json:"description,omitempty"`
-	Now          *XVynoraIPTVProgram    `json:"now,omitempty"`
-	Next         *XVynoraIPTVProgram    `json:"next,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	Name         string                  `json:"name"`
+	Stream       string                  `json:"stream"`
+	ThreadfinURL string                  `json:"threadfin_url,omitempty"`
+	Logo         string                  `json:"logo,omitempty"`
+	Group        string                  `json:"group"`
+	Category     string                  `json:"category"`
+	Country      string                  `json:"country,omitempty"`
+	Language     string                  `json:"language,omitempty"`
+	Quality      string                  `json:"quality,omitempty"`
+	Health       string                  `json:"health"`
+	Status       string                  `json:"status"`
+	Source       string                  `json:"source,omitempty"`
+	Provider     string                  `json:"provider,omitempty"`
+	Region       string                  `json:"region,omitempty"`
+	TvgID        string                  `json:"tvgId,omitempty"`
+	EPGID        string                  `json:"epg_id,omitempty"`
+	SkySports    bool                    `json:"sky_sports,omitempty"`
+	Description  string                  `json:"description,omitempty"`
+	Now          *XVynoraIPTVProgram     `json:"now,omitempty"`
+	Next         *XVynoraIPTVProgram     `json:"next,omitempty"`
+	Metadata     map[string]interface{}  `json:"metadata,omitempty"`
+	StreamURLs   []string                `json:"stream_urls,omitempty"`
+	EPGSources   []string                `json:"epg_sources,omitempty"`
+	AltNames     []string                `json:"alt_names,omitempty"`
+	Network      string                  `json:"network,omitempty"`
+	LastChecked  string                  `json:"last_checked,omitempty"`
+	Streams      []XVynoraIPTVStreamView `json:"streams,omitempty"`
 }
 
 type xvynoraIPTVSnapshot struct {
@@ -93,11 +118,69 @@ func XVynoraIPTVAPI(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 
+	case "catalogue", "catalogue/status":
+		cache, err := xvynoraIPTVCatalogueEntries()
+		if err != nil {
+			xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{
+				"status":    true,
+				"available": false,
+				"error":     err.Error(),
+			})
+			return
+		}
+		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{
+			"status":       true,
+			"available":    true,
+			"count":        len(cache.Channels),
+			"last_refresh": cache.LastRefresh,
+		})
+
+	case "catalogue/refresh":
+		if r.Method != http.MethodPost {
+			xvynoraWriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"status": false, "error": "method not allowed"})
+			return
+		}
+		if err := xvynoraIPTVRefreshCatalogue(); err != nil {
+			xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{"status": false, "error": err.Error()})
+			return
+		}
+		cache, _ := xvynoraIPTVCatalogueEntries()
+		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{
+			"status":       true,
+			"count":        len(cache.Channels),
+			"last_refresh": cache.LastRefresh,
+		})
+
+	case "categories", "countries", "languages":
+		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{"status": true, "values": xvynoraIPTVDistinctValues(path)})
+
+	case "health":
+		counts := map[string]int{"unknown": 0, "probing": 0, "online": 0, "buffering": 0, "failed": 0}
+		for _, channel := range xvynoraIPTVChannels(false) {
+			state := channel.Status
+			if _, ok := counts[state]; !ok {
+				state = "unknown"
+			}
+			counts[state]++
+		}
+		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{"status": true, "counts": counts})
+
 	case "channels":
 		channels := xvynoraIPTVFilterChannels(xvynoraIPTVChannels(false), r)
+		offset := xvynoraIPTVPositiveInt(r.URL.Query().Get("offset"))
+		total := len(channels)
+		if offset > total {
+			offset = total
+		}
+		channels = channels[offset:]
+		if limit := xvynoraIPTVPositiveInt(r.URL.Query().Get("limit")); limit > 0 && len(channels) > limit {
+			channels = channels[:limit]
+		}
 		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{
 			"status":           true,
 			"count":            len(channels),
+			"total":            total,
+			"offset":           offset,
 			"channels":         channels,
 			"groups":           xvynoraIPTVSnap.groups,
 			"scan_in_progress": System.ScanInProgress == 1,
@@ -111,7 +194,7 @@ func XVynoraIPTVAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now, next := xvynoraIPTVNowNext(channel)
-		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{"status": true, "channel": id, "now": now, "next": next})
+		xvynoraWriteJSON(w, http.StatusOK, map[string]interface{}{"status": true, "channel": id, "now": now, "next": next, "sources": channel.EPGSources})
 
 	case "probe":
 		channel, ok := xvynoraIPTVFindChannel(r.URL.Query().Get("channel"))
@@ -319,6 +402,7 @@ func xvynoraIPTVChannels(force bool) []XVynoraIPTVChannelView {
 			}
 		}
 	}
+	channels = xvynoraIPTVMergeChannels(channels)
 
 	groups := make([]string, 0, len(groupSet))
 	for group := range groupSet {
@@ -350,7 +434,7 @@ func xvynoraIPTVViewFromXEPG(channel XEPGChannelStruct) XVynoraIPTVChannelView {
 	category := xvynoraIPTVCategorise(title, group, source)
 	now, next := xvynoraIPTVNowNextFromXEPG(channel)
 
-	return XVynoraIPTVChannelView{
+	view := XVynoraIPTVChannelView{
 		ID:           firstNonEmpty(channel.XEPG, channel.ChannelUniqueID, channel.UUIDValue, xvynoraIPTVHash(channel.FileM3UID+"|"+channel.URL+"|"+title)),
 		Title:        title,
 		Name:         title,
@@ -365,6 +449,7 @@ func xvynoraIPTVViewFromXEPG(channel XEPGChannelStruct) XVynoraIPTVChannelView {
 		Health:       "unknown",
 		Status:       "unknown",
 		Source:       source,
+		Provider:     xvynoraIPTVProviderName(channel.FileM3UID, channel.FileM3UName, source),
 		TvgID:        channel.TvgID,
 		EPGID:        channel.XMapping,
 		SkySports:    category == "Sky Sports",
@@ -372,6 +457,7 @@ func xvynoraIPTVViewFromXEPG(channel XEPGChannelStruct) XVynoraIPTVChannelView {
 		Now:          now,
 		Next:         next,
 	}
+	return xvynoraIPTVEnrichView(view)
 }
 
 func xvynoraIPTVViewFromStream(stream map[string]string, index int) XVynoraIPTVChannelView {
@@ -381,7 +467,7 @@ func xvynoraIPTVViewFromStream(stream map[string]string, index int) XVynoraIPTVC
 	category := xvynoraIPTVCategorise(title, group, source)
 	id := firstNonEmpty(stream["_uuid.value"], stream["tvg-id"], stream["channelID"], fmt.Sprintf("stream-%d-%s", index, xvynoraIPTVHash(stream["url"])))
 
-	return XVynoraIPTVChannelView{
+	view := XVynoraIPTVChannelView{
 		ID:          id,
 		Title:       title,
 		Name:        title,
@@ -395,11 +481,199 @@ func xvynoraIPTVViewFromStream(stream map[string]string, index int) XVynoraIPTVC
 		Health:      "unknown",
 		Status:      "unknown",
 		Source:      source,
+		Provider:    xvynoraIPTVProviderName(stream["_file.m3u.id"], stream["_file.m3u.name"], source),
 		TvgID:       stream["tvg-id"],
 		EPGID:       stream["tvg-id"],
 		SkySports:   category == "Sky Sports",
 		Description: group,
 	}
+	return xvynoraIPTVEnrichView(view)
+}
+
+func xvynoraIPTVEnrichView(view XVynoraIPTVChannelView) XVynoraIPTVChannelView {
+	entry, ok := xvynoraIPTVCatalogueFor(view.ID, view.TvgID, view.Title)
+	if !ok {
+		if xvynoraIPTVLogoURL(view.Logo) == "" {
+			view.Logo = ""
+		}
+		if view.Stream != "" {
+			view.StreamURLs = []string{view.Stream}
+			view.Streams = []XVynoraIPTVStreamView{xvynoraIPTVStreamFromView(view)}
+		}
+		return view
+	}
+
+	view.ID = entry.ID
+	view.AltNames = entry.AltNames
+	view.Network = entry.Network
+	view.Country = firstNonEmpty(entry.CountryName, entry.Country, view.Country)
+	if len(entry.BroadcastArea) > 0 {
+		view.Region = strings.Join(entry.BroadcastArea, ", ")
+	}
+	view.Language = firstNonEmpty(strings.Join(entry.LanguageNames, ", "), strings.Join(entry.Languages, ", "), view.Language)
+	view.Category = firstNonEmpty(strings.Join(entry.CategoryNames, ", "), strings.Join(entry.Categories, ", "), view.Category)
+	view.Group = firstNonEmpty(view.Group, entry.FeedName, "Live TV")
+	view.TvgID = firstNonEmpty(view.TvgID, entry.EPGID)
+	view.EPGID = firstNonEmpty(view.EPGID, entry.EPGID)
+	view.EPGSources = entry.EPGSources
+	view.LastChecked = entry.UpdatedAt
+	view.Provider = firstNonEmpty(view.Provider, view.Source)
+	view.Metadata = map[string]interface{}{
+		"website":           entry.Website,
+		"feed":              entry.Feed,
+		"feed_name":         entry.FeedName,
+		"owners":            entry.Owners,
+		"broadcast_area":    entry.BroadcastArea,
+		"timezone":          entry.Timezone,
+		"format":            entry.Format,
+		"logo_format":       entry.LogoFormat,
+		"logo_width":        entry.LogoWidth,
+		"logo_height":       entry.LogoHeight,
+		"stream_quality":    entry.StreamQuality,
+		"stream_title":      entry.StreamTitle,
+		"stream_label":      entry.StreamLabel,
+		"stream_referrer":   entry.StreamRef,
+		"stream_user_agent": entry.StreamAgent,
+	}
+	if view.Logo == "" || xvynoraIPTVLogoURL(view.Logo) == "" {
+		view.Logo = entry.Logo
+	}
+	if xvynoraIPTVLogoURL(view.Logo) == "" {
+		view.Logo = ""
+	}
+	view.StreamURLs = append([]string{}, entry.StreamURLs...)
+	if view.Stream != "" && !containsString(view.StreamURLs, view.Stream) {
+		view.StreamURLs = append([]string{view.Stream}, view.StreamURLs...)
+	}
+	view.Streams = nil
+	for _, url := range view.StreamURLs {
+		stream := XVynoraIPTVStreamView{
+			URL:      url,
+			Source:   "iptv-org",
+			Provider: entry.FeedName,
+			Country:  entry.Country,
+			Region:   view.Region,
+			Language: strings.Join(entry.Languages, ", "),
+			Health:   "unknown",
+		}
+		for _, catalogueStream := range entry.Streams {
+			if catalogueStream.URL == url {
+				stream.Feed = catalogueStream.Feed
+				stream.Title = catalogueStream.Title
+				stream.Availability = catalogueStream.Availability
+				stream.Referrer = catalogueStream.Referrer
+				stream.UserAgent = catalogueStream.UserAgent
+				stream.Quality = catalogueStream.Quality
+				break
+			}
+		}
+		view.Streams = append(view.Streams, stream)
+	}
+	if view.Stream != "" {
+		view.Streams = appendUniqueStreams([]XVynoraIPTVStreamView{xvynoraIPTVStreamFromView(view)}, view.Streams...)
+	}
+	return view
+}
+
+func xvynoraIPTVStreamFromView(view XVynoraIPTVChannelView) XVynoraIPTVStreamView {
+	return XVynoraIPTVStreamView{
+		URL:          view.Stream,
+		Source:       view.Source,
+		Provider:     view.Provider,
+		Country:      view.Country,
+		Region:       view.Region,
+		Language:     view.Language,
+		Quality:      view.Quality,
+		Availability: "Unknown",
+		Health:       view.Health,
+	}
+}
+
+func xvynoraIPTVProviderName(providerID, providerName, source string) string {
+	if source == "uk" || source == "pk" || source == "sports" {
+		return "IPTV-org"
+	}
+	if providerID != "" {
+		if provider, ok := Settings.Files.M3U[providerID].(map[string]interface{}); ok {
+			if name, ok := provider["name"].(string); ok && strings.TrimSpace(name) != "" {
+				return strings.TrimSpace(name)
+			}
+		}
+	}
+	return firstNonEmpty(providerName, "Unknown")
+}
+
+func xvynoraIPTVMergeKey(view XVynoraIPTVChannelView) string {
+	if entry, ok := xvynoraIPTVCatalogueFor(view.ID, view.TvgID, view.Title); ok {
+		return "id:" + entry.ID
+	}
+	if view.TvgID != "" {
+		return "tvg:" + strings.ToLower(view.TvgID) + "|" + strings.ToLower(view.Country) + "|" + strings.ToLower(view.Region)
+	}
+	if view.Stream != "" {
+		return "url:" + view.Stream
+	}
+	return "id:" + view.ID
+}
+
+func xvynoraIPTVMergeChannels(channels []XVynoraIPTVChannelView) []XVynoraIPTVChannelView {
+	merged := make(map[string]int, len(channels))
+	result := make([]XVynoraIPTVChannelView, 0, len(channels))
+	for _, view := range channels {
+		key := xvynoraIPTVMergeKey(view)
+		if index, ok := merged[key]; ok {
+			target := &result[index]
+			if target.Stream == "" {
+				target.Stream = view.Stream
+			}
+			if target.Logo == "" {
+				target.Logo = view.Logo
+			}
+			if target.Provider == "" {
+				target.Provider = view.Provider
+			}
+			if target.Source == "" {
+				target.Source = view.Source
+			}
+			if target.Country == "" {
+				target.Country = view.Country
+			}
+			target.StreamURLs = appendUnique(target.StreamURLs, view.StreamURLs...)
+			target.Streams = appendUniqueStreams(target.Streams, view.Streams...)
+			continue
+		}
+		merged[key] = len(result)
+		result = append(result, view)
+	}
+	return result
+}
+
+func appendUnique(values []string, incoming ...string) []string {
+	for _, value := range incoming {
+		if value != "" && !containsString(values, value) {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func appendUniqueStreams(values []XVynoraIPTVStreamView, incoming ...XVynoraIPTVStreamView) []XVynoraIPTVStreamView {
+	for _, value := range incoming {
+		if value.URL == "" {
+			continue
+		}
+		found := false
+		for _, current := range values {
+			if current.URL == value.URL {
+				found = true
+				break
+			}
+		}
+		if !found {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func xvynoraIPTVFilterChannels(channels []XVynoraIPTVChannelView, r *http.Request) []XVynoraIPTVChannelView {
@@ -410,18 +684,27 @@ func xvynoraIPTVFilterChannels(channels []XVynoraIPTVChannelView, r *http.Reques
 	language := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("language")))
 	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 	health := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("health")))
-	limit := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		fmt.Sscanf(raw, "%d", &limit)
-	}
+	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
+	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
+	working := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("working")), "true")
 
 	filtered := make([]XVynoraIPTVChannelView, 0, len(channels))
 	for _, channel := range channels {
 		if source != "" && source != "all" && channel.Source != source {
 			continue
 		}
+		if provider != "" && !strings.Contains(strings.ToLower(channel.Provider), provider) {
+			continue
+		}
+		if region != "" && !strings.Contains(strings.ToLower(channel.Region), region) {
+			continue
+		}
 		haystack := strings.ToLower(strings.Join([]string{
 			channel.Title,
+			channel.Name,
+			channel.ID,
+			strings.Join(channel.AltNames, " "),
+			channel.Network,
 			channel.Group,
 			channel.Category,
 			channel.Country,
@@ -447,12 +730,50 @@ func xvynoraIPTVFilterChannels(channels []XVynoraIPTVChannelView, r *http.Reques
 		if health != "" && strings.ToLower(channel.Health) != health && strings.ToLower(channel.Status) != health {
 			continue
 		}
-		filtered = append(filtered, channel)
-		if limit > 0 && len(filtered) >= limit {
-			break
+		if working && channel.Status != "online" {
+			continue
 		}
+		filtered = append(filtered, channel)
 	}
 	return filtered
+}
+
+func xvynoraIPTVPositiveInt(value string) int {
+	var result int
+	if _, err := fmt.Sscanf(strings.TrimSpace(value), "%d", &result); err != nil || result < 0 {
+		return 0
+	}
+	return result
+}
+
+func xvynoraIPTVDistinctValues(kind string) []string {
+	cache, err := xvynoraIPTVCatalogueEntries()
+	if err != nil {
+		return []string{}
+	}
+	values := make(map[string]struct{})
+	for _, channel := range cache.Channels {
+		var items []string
+		switch kind {
+		case "categories":
+			items = channel.Categories
+		case "countries":
+			items = []string{channel.Country}
+		case "languages":
+			items = channel.Languages
+		}
+		for _, value := range items {
+			if value = strings.TrimSpace(value); value != "" {
+				values[value] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func xvynoraIPTVFindChannel(id string) (XVynoraIPTVChannelView, bool) {
@@ -626,6 +947,7 @@ func xvynoraIPTVProgramFromXML(program *Program, start, stop, now time.Time) XVy
 		Start:       start.Format(time.RFC3339),
 		Stop:        stop.Format(time.RFC3339),
 		Progress:    progress,
+		Source:      "Threadfin/XEPG",
 	}
 }
 
@@ -694,7 +1016,7 @@ func xvynoraIPTVProbeURL(streamURL string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		return "online", nil
+		return "unknown", errors.New("stream reachable; playback not verified")
 	}
 	return "failed", fmt.Errorf("stream returned HTTP %d", resp.StatusCode)
 }
@@ -718,6 +1040,9 @@ func xvynoraIPTVImportSource(sourceID, playlistURL, epgURL, name string) (interf
 		}
 		if err := xvynoraIPTVRefreshAll(); err != nil {
 			return imported, err
+		}
+		if err := xvynoraIPTVRefreshCatalogue(); err != nil {
+			showInfo("IPTV-org catalogue refresh failed: " + err.Error())
 		}
 		return imported, nil
 	}

@@ -96,6 +96,17 @@ select:focus {
     outline: none;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+    }
+}
+
 /* ---------------- APPLICATION ---------------- */
 
 #app {
@@ -454,7 +465,12 @@ select:focus {
 }
 
 .shelf-viewport {
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    overscroll-behavior-inline: contain;
+    scroll-behavior: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .shelf-row {
@@ -824,6 +840,8 @@ select:focus {
     gap: 14px;
 
     scrollbar-width: none;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* ---------------- GUIDE ---------------- */
@@ -832,6 +850,8 @@ select:focus {
     height: 60vh;
     overflow: auto;
     scrollbar-width: none;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 .guide-grid {
@@ -1007,13 +1027,18 @@ select:focus {
         inset 0 1px 1px rgba(255,255,255,.55),
         0 25px 80px rgba(0,0,0,.7);
 
-    opacity: 0;
-
-    transform: translateY(20px);
+    opacity: 1;
+    transform: translateY(0);
 
     transition:
         opacity .3s,
         transform .3s var(--spring);
+}
+
+.player-hud.hidden {
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
 }
 
 #player:hover .player-hud,
@@ -1162,6 +1187,13 @@ select:focus {
 
     border-left: 0;
     border-right: 1px solid var(--border);
+}
+
+#channelList {
+    height: calc(100% - 82px);
+    overflow-y: auto;
+    scrollbar-width: none;
+    overscroll-behavior: contain;
 }
 
 .channel-drawer.open {
@@ -1594,12 +1626,12 @@ select:focus {
 
             </section>
 
-            <section class="shelf">
+            <section id="featuredShelf" class="shelf">
 
                 <div class="shelf-heading">
 
                     <h2 class="shelf-title">
-                        Featured
+                        Core UK
                     </h2>
 
                     <span
@@ -1621,12 +1653,12 @@ select:focus {
 
             </section>
 
-            <section class="shelf">
+            <section id="liveShelf" class="shelf">
 
                 <div class="shelf-heading">
 
                     <h2 class="shelf-title">
-                        Live TV
+                        Pakistan
                     </h2>
 
                     <span
@@ -1648,7 +1680,7 @@ select:focus {
 
             </section>
 
-            <section class="shelf">
+            <section id="sportsShelf" class="shelf">
 
                 <div class="shelf-heading">
 
@@ -2076,6 +2108,33 @@ select:focus {
                 </button>
 
                 <button
+                    id="previousChannel"
+                    class="player-control"
+                    aria-label="Previous channel">
+
+                    <i data-lucide="skip-back"></i>
+
+                </button>
+
+                <button
+                    id="nextChannel"
+                    class="player-control"
+                    aria-label="Next channel">
+
+                    <i data-lucide="skip-forward"></i>
+
+                </button>
+
+                <button
+                    id="playerGuide"
+                    class="player-control"
+                    aria-label="Guide">
+
+                    <i data-lucide="tv"></i>
+
+                </button>
+
+                <button
                     id="seekBack"
                     class="player-control">
 
@@ -2225,30 +2284,62 @@ const App = (() => {
             ),
 
         filter: "all",
-        workingOnly: false,
+        workingOnly: true,
+
+        scanState: {
+            total: 0,
+            scanned: 0,
+            active: 0,
+            running: false,
+            abort: null,
+            refreshTimer: null,
+            retries: new Map(),
+            healthCache: null
+        },
 
         rows: [],
         row: 0,
         col: 0,
 
         current: null,
+        lastPlaybackChannel: null,
+        lastFocusBeforePlayer: null,
 
         hls: null,
+        playbackSession: 0,
+        playbackAbort: null,
+        attemptedStreams: new Set(),
 
         backgroundIndex: 0,
 
         searchIndex: new Map(),
+        drawerChannels: [],
+        drawerRenderTimer: null,
+        scrollMotion: new WeakMap(),
+        remoteMode: false,
 
         searchTimer: null,
 
         epg: new Map(),
+        epgAliases: new Map(),
+        guideOffset: 0,
 
         recorder: null,
         recordedChunks: [],
         recordStarted: 0,
         recordTimer: null,
 
-        audioContext: null
+        audioContext: null,
+
+        volume: Number(
+            localStorage.getItem(
+                "xvynora-volume"
+            ) || "0.8"
+        ),
+
+        playerHudTimer: null,
+
+        overlayFocus: new Map()
 
     };
 
@@ -2301,6 +2392,73 @@ const App = (() => {
 
     }
 
+    function updateWorkingOnlyChip() {
+
+        const chip =
+            $("workingOnly");
+
+        if(!chip)
+            return;
+
+        chip.classList.toggle(
+            "active",
+            state.workingOnly
+        );
+
+        chip.textContent =
+            state.workingOnly
+                ? "Working only • ON"
+                : "Working only";
+
+    }
+
+    function updateScanStatus(label) {
+
+        const chip =
+            $("workingOnly");
+
+        if(!chip)
+            return;
+
+        const counts =
+            state.channels.reduce(
+                (result,channel) => {
+                    result.total += 1;
+                    if(channel.status === "online")
+                        result.working += 1;
+                    else if(channel.status === "probing")
+                        result.probing += 1;
+                    else if(channel.status === "failed")
+                        result.failed += 1;
+                    return result;
+                },
+                {total:0,working:0,probing:0,failed:0}
+            );
+
+        chip.dataset.total = String(counts.total);
+        chip.dataset.working = String(counts.working);
+        chip.dataset.probing = String(counts.probing);
+        chip.dataset.failed = String(counts.failed);
+
+        if(state.scanState.running && state.scanState.total > 0) {
+            chip.title =
+                `${label || "Scanning channels"}: ${state.scanState.scanned.toLocaleString()} / ${state.scanState.total.toLocaleString()} | Total ${counts.total.toLocaleString()} | Working ${counts.working.toLocaleString()} | Probing ${counts.probing.toLocaleString()} | Failed ${counts.failed.toLocaleString()}`;
+            chip.textContent =
+                state.workingOnly
+                    ? `Working only • ${state.scanState.scanned.toLocaleString()}/${state.scanState.total.toLocaleString()}`
+                    : "Working only";
+            return;
+        }
+
+        chip.title =
+            `Total ${counts.total.toLocaleString()} | Working ${counts.working.toLocaleString()} | Probing ${counts.probing.toLocaleString()} | Failed ${counts.failed.toLocaleString()}`;
+        chip.textContent =
+            state.workingOnly
+                ? "Working only • ON"
+                : "Working only";
+
+    }
+
     function normalizeUrl(url) {
 
         try {
@@ -2311,6 +2469,64 @@ const App = (() => {
         } catch {
             return url;
         }
+
+    }
+
+    function channelKey(channel) {
+
+        const stream =
+            String(
+                channel?.stream || channel?.url || ""
+            ).trim();
+
+        const tvg =
+            String(
+                channel?.tvgId || channel?.epg_id || ""
+            ).trim();
+
+        const id =
+            String(
+                channel?.id || ""
+            ).trim();
+
+        if(tvg && stream)
+            return `tvg:${tvg}|${stream}`;
+
+        if(id)
+            return `id:${id}`;
+
+        if(stream)
+            return `url:${stream}`;
+
+        return `title:${String(channel?.title || "unknown")}`;
+
+    }
+
+    function dedupeChannels(list) {
+
+        const deduped = new Map();
+
+        for(const channel of list) {
+
+            const item = normalizeChannel(channel);
+            const key = channelKey(item);
+
+            if(!deduped.has(key))
+                deduped.set(key, item);
+            else {
+                const current = deduped.get(key);
+                deduped.set(key, {
+                    ...current,
+                    ...item,
+                    id: current.id || item.id,
+                    title: current.title || item.title,
+                    stream: current.stream || item.stream
+                });
+            }
+
+        }
+
+        return [...deduped.values()];
 
     }
 
@@ -2648,20 +2864,28 @@ const App = (() => {
             const channel of state.channels
         ) {
 
-            const tokens =
-                (
-                    [
-                        channel.title,
-                        channel.group,
-                        channel.category,
-                        channel.country,
-                        channel.language,
-                        channel.quality
-                    ]
-                    .filter(Boolean)
-                    .join(" ")
-                    .toLowerCase()
-                )
+            channel.searchText =
+                [
+                    channel.title,
+                    channel.name,
+                    channel.tvgId,
+                    channel.id,
+                    channel.group,
+                    channel.category,
+                    channel.country,
+                    channel.region,
+                    channel.language,
+                    channel.quality,
+                    channel.provider,
+                    channel.source,
+                    channel.network,
+                    ...(channel.alt_names || [])
+                ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+
+            const tokens = channel.searchText
                 .split(
                     /[^a-z0-9]+/i
                 )
@@ -2677,16 +2901,13 @@ const App = (() => {
                     )
                 ) {
 
-                    state.searchIndex.set(
-                        token,
-                        []
-                    );
+                    state.searchIndex.set(token, new Set());
 
                 }
 
                 state.searchIndex
                     .get(token)
-                    .push(channel);
+                    .add(channel);
 
             }
 
@@ -2702,57 +2923,39 @@ const App = (() => {
                 .toLowerCase();
 
         if(!q)
-            return state.channels.slice(0,60);
+            return (state.workingOnly ? state.filtered : state.channels)
+                .slice(0,60);
 
         const terms =
             q.split(
                 /\s+/
             );
 
-        const score =
-            new Map();
-
-        for(
-            const channel of state.channels
-        ) {
-
-            const hay =
-                [
-                    channel.title,
-                    channel.group,
-                    channel.category,
-                    channel.country,
-                    channel.language,
-                    channel.quality
-                ]
-                .filter(Boolean)
-                .join(" ")
-                .toLowerCase();
-
-            let points = 0;
-
-            for(
-                const term of terms
-            ) {
-
-                if(
-                    hay.startsWith(term)
-                )
-                    points += 8;
-
-                else if(
-                    hay.includes(term)
-                )
-                    points += 3;
-
+        let candidates = null;
+        for(const term of terms) {
+            const matches = new Set();
+            for(const [token,channels] of state.searchIndex) {
+                if(token.startsWith(term))
+                    channels.forEach(channel => matches.add(channel));
             }
+            candidates = candidates
+                ? new Set([...candidates].filter(channel => matches.has(channel)))
+                : matches;
+        }
 
+        const score = new Map();
+        for(const channel of candidates || []) {
+            if(state.workingOnly && channel.status !== "online")
+                continue;
+            let points = 0;
+            for(const term of terms) {
+                if(channel.title.toLowerCase().startsWith(term))
+                    points += 12;
+                else if(channel.searchText.includes(term))
+                    points += 3;
+            }
             if(points)
-                score.set(
-                    channel,
-                    points
-                );
-
+                score.set(channel, points);
         }
 
         return [...score.entries()]
@@ -2788,14 +2991,22 @@ const App = (() => {
                 channels.filter(
                     channel => {
 
+                        if(filter === "favorites")
+                            return state.favorites.has(channel.id);
+
                         const hay =
                             [
                                 channel.title,
                                 channel.group,
                                 channel.category,
                                 channel.country,
+                                channel.region,
                                 channel.language,
-                                channel.quality
+                                channel.quality,
+                                channel.provider,
+                                channel.source,
+                                channel.tvgId,
+                                channel.id
                             ]
                             .filter(Boolean)
                             .join(" ")
@@ -2817,8 +3028,7 @@ const App = (() => {
             channels =
                 channels.filter(
                     channel =>
-                        channel.status ===
-                        "online"
+                        channel.status === "online"
                 );
 
         }
@@ -2827,6 +3037,16 @@ const App = (() => {
             channels;
 
         renderShelves();
+
+        if(
+            state.filtered.length === 0 &&
+            state.workingOnly
+        ) {
+            $("heroTitle").textContent =
+                "No working channels found";
+            $("heroDescription").textContent =
+                "The current scan has not yet validated a playable channel. Try a different filter or continue scanning.";
+        }
 
     }
 
@@ -2935,23 +3155,32 @@ const App = (() => {
             </div>
         `;
 
+        const activateCard = () => {
+
+            state.row = row;
+            state.col = index;
+
+            focusCard(card);
+
+            updateHero(
+                channel
+            );
+
+            clickSound(
+                480 + row * 50
+            );
+
+        };
+
         card.addEventListener(
             "focus",
+            activateCard
+        );
+
+        card.addEventListener(
+            "pointerenter",
             () => {
-
-                state.row = row;
-                state.col = index;
-
-                focusCard(card);
-
-                updateHero(
-                    channel
-                );
-
-                clickSound(
-                    480 + row * 50
-                );
-
+                updateHero(channel);
             }
         );
 
@@ -2986,13 +3215,13 @@ const App = (() => {
 
                 card.style.setProperty(
                     "--rx",
-                    ((.5 - y) * 9) +
+                    ((.5 - y) * 3) +
                     "deg"
                 );
 
                 card.style.setProperty(
                     "--ry",
-                    ((x - .5) * 9) +
+                    ((x - .5) * 3) +
                     "deg"
                 );
 
@@ -3036,6 +3265,75 @@ const App = (() => {
        SHELVES
        ======================================================== */
 
+    const coreUKIds = [
+        "BBCOne.uk", "BBCTwo.uk", "BBCThree.uk", "BBCFour.uk",
+        "BBCNews.uk", "BBCParliament.uk", "ITV1.uk", "ITV2.uk",
+        "ITV3.uk", "ITV4.uk", "Channel4.uk", "E4.uk", "Film4.uk",
+        "More4.uk", "Channel5.uk", "5STAR.uk", "5USA.uk", "5Action.uk",
+        "SkyNews.uk", "GBNews.uk"
+    ];
+
+    const pakistanPriorityIds = [
+        "HumEurope.pk", "HumMasala.pk", "ARYDigital.pk", "ARYNews.pk",
+        "GeoNews.pk", "GeoEntertainment.pk", "NewVisionTV.pk"
+    ];
+
+    function channelText(channel) {
+        return [
+            channel.title,
+            channel.name,
+            channel.country,
+            channel.region,
+            channel.language,
+            channel.category,
+            channel.group,
+            channel.provider,
+            channel.source,
+            channel.tvgId,
+            ...(channel.alt_names || [])
+        ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function orderedPriorityChannels(channels, ids, predicate) {
+        const byId = new Map(
+            channels.map(channel => [channel.id, channel])
+        );
+        const priority = ids
+            .map(id => byId.get(id))
+            .filter(Boolean);
+        const remaining = channels
+            .filter(channel =>
+                !ids.includes(channel.id) &&
+                (!predicate || predicate(channel))
+            )
+            .sort((a,b) =>
+                a.title.localeCompare(b.title)
+            );
+        return [...priority, ...remaining];
+    }
+
+    function ensureCategoryShelf(slug, title) {
+        const id = `${slug}Shelf`;
+        let shelf = $(id);
+        if(shelf)
+            return shelf;
+
+        shelf = document.createElement("section");
+        shelf.id = id;
+        shelf.className = "shelf";
+        shelf.innerHTML = `
+            <div class="shelf-heading">
+                <h2 class="shelf-title">${escapeHTML(title)}</h2>
+                <span id="${slug}Count" class="shelf-count"></span>
+            </div>
+            <div class="shelf-viewport">
+                <div id="${slug}Row" class="shelf-row"></div>
+            </div>
+        `;
+        $("contentInner").appendChild(shelf);
+        return shelf;
+    }
+
     function renderShelves() {
 
         const channels =
@@ -3045,10 +3343,24 @@ const App = (() => {
                 : state.filtered;
 
         const featured =
-            channels.slice(0,40);
+            orderedPriorityChannels(
+                channels,
+                coreUKIds,
+                channel =>
+                    /^GB$|united kingdom|\buk\b/i.test(
+                        channel.country + " " + channel.group
+                    )
+            ).slice(0,40);
 
         const live =
-            channels.slice(0,80);
+            orderedPriorityChannels(
+                channels,
+                pakistanPriorityIds,
+                channel =>
+                    /^PK$|pakistan/i.test(
+                        channel.country + " " + channel.group
+                    )
+            ).slice(0,80);
 
         const sports =
             channels.filter(
@@ -3128,6 +3440,34 @@ const App = (() => {
             sportsRow
         );
 
+        const categories = [
+            ["uk", "UK", channel => /\bGB\b|united kingdom|\buk\b/i.test(channelText(channel))],
+            ["international", "International", channel => !/\bGB\b|united kingdom|\bPK\b|pakistan/i.test(channelText(channel))],
+            ["news", "News", channel => /news/i.test(channelText(channel))],
+            ["entertainment", "Entertainment", channel => /entertainment/i.test(channelText(channel))],
+            ["kids", "Kids", channel => /kids|children|cbeebies/i.test(channelText(channel))],
+            ["movies", "Movies", channel => /movies|film/i.test(channelText(channel))],
+            ["music", "Music", channel => /music/i.test(channelText(channel))],
+            ["radio", "Radio", channel => /radio/i.test(channelText(channel))]
+        ];
+
+        for(const [slug,title,predicate] of categories) {
+            const shelf = ensureCategoryShelf(slug, title);
+            const categoryChannels = channels
+                .filter(predicate)
+                .slice(0,80);
+            renderRow(
+                $(`${slug}Row`),
+                categoryChannels,
+                rows.length
+            );
+            shelf.hidden = !categoryChannels.length;
+            $(`${slug}Count`).textContent =
+                `${categoryChannels.length} channels`;
+            if(categoryChannels.length)
+                rows.push(categoryChannels);
+        }
+
         $("favoritesShelf").hidden =
             !favorites.length;
 
@@ -3159,6 +3499,16 @@ const App = (() => {
 
             state.row = 0;
             state.col = 0;
+
+            if(
+                state.workingOnly
+            ) {
+                $("heroTitle").textContent =
+                    "No working channels found";
+                $("heroDescription").textContent =
+                    "The current scan has not validated a working stream yet.";
+            }
+
             return;
 
         }
@@ -3238,6 +3588,11 @@ const App = (() => {
             "focused"
         );
 
+        if(state.remoteMode) {
+            card.style.setProperty("--rx", "0deg");
+            card.style.setProperty("--ry", "0deg");
+        }
+
         card.focus({
             preventScroll: true
         });
@@ -3302,53 +3657,49 @@ const App = (() => {
         dy
     ) {
 
-        const rows =
-            state.rows;
+        const active =
+            cardAt(state.row, state.col) ||
+            document.querySelector(".card.focused");
+        const cards =
+            [...document.querySelectorAll(".card")]
+                .filter(card => card !== active);
 
-        if(!rows.length)
+        if(!active || !cards.length)
             return;
 
-        let row =
-            state.row + dy;
+        const activeRect = active.getBoundingClientRect();
+        const activeX = activeRect.left + activeRect.width / 2;
+        const activeY = activeRect.top + activeRect.height / 2;
+        const candidates = cards
+            .map(card => {
+                const rect = card.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const offsetX = x - activeX;
+                const offsetY = y - activeY;
+                const primary = dx
+                    ? offsetX * dx
+                    : offsetY * dy;
+                const secondary = dx
+                    ? Math.abs(offsetY)
+                    : Math.abs(offsetX);
+                return {
+                    card,
+                    score: primary > 0
+                        ? primary + secondary * 1.8
+                        : Infinity
+                };
+            })
+            .filter(item => item.score < Infinity)
+            .sort((a,b) => a.score - b.score);
 
-        row =
-            Math.max(
-                0,
-                Math.min(
-                    rows.length - 1,
-                    row
-                )
-            );
-
-        const data =
-            rows[row];
-
-        if(!data.length)
+        const next = candidates[0]?.card;
+        if(!next)
             return;
 
-        let col =
-            state.col + dx;
-
-        col =
-            Math.max(
-                0,
-                Math.min(
-                    data.length - 1,
-                    col
-                )
-            );
-
-        state.row = row;
-        state.col = col;
-
-        const card =
-            cardAt(
-                row,
-                col
-            );
-
-        if(card)
-            focusCard(card);
+        state.row = Number(next.dataset.row) || 0;
+        state.col = Number(next.dataset.col) || 0;
+        focusCard(next);
 
     }
 
@@ -3600,30 +3951,43 @@ const App = (() => {
         channel
     ) {
 
+        const title =
+            channel.title ||
+            channel.name ||
+            "Unknown Channel";
+
+        const stream =
+            channel.stream || "";
+
+        const tvgId =
+            channel.tvgId ||
+            channel.epg_id ||
+            "";
+
+        const fallbackId =
+            tvgId && stream
+                ? createId(
+                    `${tvgId}|${stream}`
+                )
+                : createId(
+                    `${title}|${stream}`
+                );
+
         return {
 
             id:
                 channel.id ||
-                createId(
-                    (
-                        channel.title ||
-                        channel.name ||
-                        ""
-                    ) +
-                    (
-                        channel.stream ||
-                        ""
-                    )
-                ),
+                fallbackId,
 
-            title:
-                channel.title ||
-                channel.name ||
-                "Unknown Channel",
+            title,
 
-            stream:
-                channel.stream || "",
+            stream,
 
+
+            stream_urls:
+                Array.isArray(channel.stream_urls)
+                    ? channel.stream_urls.filter(Boolean)
+                    : [],
             threadfinUrl:
                 channel.threadfin_url || "",
 
@@ -3646,10 +4010,23 @@ const App = (() => {
             country:
                 channel.country || "",
 
-            tvgId:
-                channel.tvgId ||
+            region:
+                channel.region || "",
+
+            provider:
+                channel.provider || "",
+
+            alt_names:
+                Array.isArray(channel.alt_names)
+                    ? channel.alt_names
+                    : [],
+
+            tvgId,
+
+            epgId:
                 channel.epg_id ||
-                "",
+                channel.epgId ||
+                tvgId,
 
             quality:
                 channel.quality || "",
@@ -3699,13 +4076,27 @@ const App = (() => {
                     "channels"
                 );
 
-            state.channels =
-                (
-                    result.channels ||
-                    []
-                ).map(
-                    normalizeChannel
+            const unique =
+                dedupeChannels(
+                    result.channels || []
                 );
+
+            state.channels =
+                unique.sort(
+                    (a,b) =>
+                        (a.group || "").localeCompare(
+                            b.group || ""
+                        ) ||
+                        (a.title || "").localeCompare(
+                            b.title || ""
+                        )
+                );
+
+            state.scanState.total =
+                state.channels.length;
+            state.scanState.scanned = 0;
+            state.scanState.running = true;
+            updateScanStatus("Scanning channels");
 
             applyFilters();
 
@@ -3733,7 +4124,7 @@ const App = (() => {
                 );
 
                 toast(
-                    `${state.channels.length.toLocaleString()} channels ready`
+                    `${state.channels.length.toLocaleString()} channels loaded — scanning for working streams`
                 );
 
             } else {
@@ -3753,13 +4144,15 @@ const App = (() => {
             }
 
             probeBatch(
-                state.channels.slice(0,80),
-                4
+                prioritizeScanChannels(state.channels),
+                10
             );
 
         } catch(error) {
 
             console.error(error);
+            state.scanState.running = false;
+            updateScanStatus("Channels unavailable");
 
             toast(
                 "Unable to load Threadfin channels"
@@ -4175,6 +4568,14 @@ const App = (() => {
             );
 
         state.epg.clear();
+        state.epgAliases.clear();
+
+        xml.querySelectorAll("channel").forEach(channel => {
+            const id = channel.getAttribute("id");
+            const name = channel.querySelector("display-name")?.textContent?.trim();
+            if(id && name)
+                state.epgAliases.set(name.toLowerCase(), id);
+        });
 
         programmes.forEach(
             program => {
@@ -4270,7 +4671,8 @@ const App = (() => {
             return;
 
         const now =
-            Date.now();
+            Date.now() +
+            state.guideOffset * 3600000;
 
         const channels =
             state.filtered
@@ -4339,13 +4741,9 @@ const App = (() => {
             `;
 
             const programs =
-                channel.tvgId
-                    ? (
-                        state.epg.get(
-                            channel.tvgId
-                        ) || []
-                    )
-                    : [];
+                channel.now || channel.next
+                    ? []
+                    : programsForChannel(channel);
 
             if(
                 !programs.length &&
@@ -4429,25 +4827,25 @@ const App = (() => {
                                 ? escapeHTML(
                                     program.title
                                 )
-                                : "Live TV"
+                                : "No EPG data"
                             }
                         </div>
 
                         <div class="program-time">
                             ${
                                 program
-                                ? new Date(
-                                    program.start
-                                ).toLocaleTimeString(
-                                    [],
-                                    {
-                                        hour:"2-digit",
-                                        minute:"2-digit"
-                                    }
-                                )
+                                ? `${new Date(program.start).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} – ${new Date(program.stop).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}`
                                 : "No EPG data"
                             }
                         </div>
+
+                        ${
+                            program &&
+                            program.start <= now &&
+                            program.stop > now
+                                ? `<div class="program-progress" style="width:${Math.max(0, Math.min(100, (now - program.start) / (program.stop - program.start) * 100))}%"></div>`
+                                : ""
+                        }
 
                     </div>
                 `;
@@ -4461,68 +4859,231 @@ const App = (() => {
 
     }
 
+    function programsForChannel(channel) {
+
+        const keys = [
+            channel.id,
+            channel.tvgId,
+            channel.epgId,
+            state.epgAliases.get(
+                String(channel.title || "").toLowerCase()
+            )
+        ].filter(Boolean);
+
+        for(const key of keys) {
+            const programs = state.epg.get(key);
+            if(programs?.length)
+                return programs;
+        }
+
+        return [];
+
+    }
+
     /* ========================================================
        HEALTH PROBING
        ======================================================== */
 
     async function probeChannel(
-        channel
+        channel,
+        signal
     ) {
 
-        channel.status =
-            "probing";
+        if(signal?.aborted)
+            return;
 
-        updateCardStatus(
-            channel
-        );
+        channel.status = "probing";
+        updateCardStatus(channel);
 
-        try {
-
-            const controller =
-                new AbortController();
-
-            const timer =
-                setTimeout(
-                    () =>
-                        controller.abort(),
-                    5000
-                );
-
-            const response =
-                await fetch(
-                    "/xvynora/api/probe?channel=" +
-                    encodeURIComponent(
-                        channel.id
-                    ),
-                    {
-                        signal:
-                            controller.signal,
-                        cache: "no-store"
-                    }
-                );
-
-            clearTimeout(
-                timer
+        const streams =
+            [channel.stream, ...(channel.stream_urls || [])]
+            .map(normalizeUrl)
+            .filter(
+                (url,index,values) =>
+                    url && values.indexOf(url) === index
             );
 
-            const result =
-                await response.json();
+        const ordered =
+            rankStreams(channel, streams);
 
-            channel.status =
-                result.health ||
-                "unknown";
+        for(const url of ordered) {
 
-        } catch {
+            if(signal?.aborted)
+                return;
 
-            channel.status =
-                "unknown";
+            const cached =
+                readHealthCache(url);
 
+            if(cached && cached.status === "online") {
+                channel.status = "online";
+                channel.stream = url;
+                updateCardStatus(channel);
+                scheduleScanRefresh();
+                return;
+            }
+
+            try {
+                await validatePlayback(url, signal);
+                channel.status = "online";
+                channel.stream = url;
+                writeHealthCache(url, "online");
+                updateCardStatus(channel);
+                scheduleScanRefresh();
+                return;
+            } catch(error) {
+                if(signal?.aborted)
+                    return;
+                writeHealthCache(url, "failed");
+                console.debug("Stream validation failed", error);
+            }
         }
 
-        updateCardStatus(
-            channel
-        );
+        if(signal?.aborted)
+            return;
 
+        channel.status = streams.length ? "failed" : "unknown";
+        updateCardStatus(channel);
+        scheduleScanRefresh();
+
+    }
+
+    function rankStreams(channel, streams) {
+
+        return streams
+            .map(
+                (url,index) => {
+                    const cached = readHealthCache(url);
+                    const retry = state.scanState.retries.get(url) || 0;
+                    return {
+                        url,
+                        score:
+                            (cached?.status === "online" ? 10000 : 0) +
+                            (cached?.status === "failed" ? -retry * 100 : 0) -
+                            retry * 10 - index
+                    };
+                }
+            )
+            .sort((a,b) => b.score - a.score)
+            .map(item => item.url);
+
+    }
+
+    function validatePlayback(url, signal) {
+
+        return new Promise((resolve,reject) => {
+
+            const video = document.createElement("video");
+            const hls =
+                window.Hls && Hls.isSupported()
+                    ? new Hls({enableWorker:true, lowLatencyMode:true})
+                    : null;
+            let timer = null;
+            let settled = false;
+
+            const cleanup = () => {
+                clearTimeout(timer);
+                video.pause();
+                video.removeAttribute("src");
+                video.load();
+                if(hls) {
+                    try {
+                        hls.detachMedia();
+                        hls.destroy();
+                    } catch {}
+                }
+                video.removeEventListener("playing", onPlaying);
+                video.removeEventListener("error", onError);
+                signal?.removeEventListener("abort", onAbort);
+            };
+
+            const finish = error => {
+                if(settled)
+                    return;
+                settled = true;
+                cleanup();
+                error ? reject(error) : resolve();
+            };
+
+            const onPlaying = () => finish();
+            const onError = () => finish(new Error("media playback failed"));
+            const onAbort = () =>
+                finish(new DOMException("validation cancelled", "AbortError"));
+
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = "metadata";
+            video.addEventListener("playing", onPlaying);
+            video.addEventListener("error", onError);
+            signal?.addEventListener("abort", onAbort, {once:true});
+            timer = setTimeout(
+                () => finish(new Error("playback validation timed out")),
+                6500
+            );
+
+            if(video.canPlayType("application/vnd.apple.mpegurl")) {
+                video.src = url;
+                video.play().catch(onError);
+            } else if(hls) {
+                hls.attachMedia(video);
+                hls.loadSource(url);
+                hls.on(Hls.Events.MANIFEST_PARSED, () =>
+                    video.play().catch(onError)
+                );
+                hls.on(Hls.Events.ERROR, (event,data) => {
+                    if(data.fatal)
+                        onError();
+                });
+            } else {
+                finish(new Error("HLS playback is unsupported"));
+            }
+        });
+    }
+
+    function healthCache() {
+
+        if(state.scanState.healthCache)
+            return state.scanState.healthCache;
+
+        try {
+            state.scanState.healthCache = JSON.parse(
+                localStorage.getItem("xvynora-health-cache") || "{}"
+            );
+        } catch {
+            state.scanState.healthCache = {};
+        }
+
+        return state.scanState.healthCache;
+    }
+
+    function readHealthCache(url) {
+        const entry = healthCache()[url];
+        if(!entry || Date.now() - entry.checked > 15 * 60 * 1000)
+            return null;
+        return entry;
+    }
+
+    function writeHealthCache(url, status) {
+        const cache = healthCache();
+        cache[url] = {status, checked:Date.now()};
+        const keys = Object.keys(cache);
+        if(keys.length > 2000)
+            delete cache[keys[0]];
+        try {
+            localStorage.setItem(
+                "xvynora-health-cache",
+                JSON.stringify(cache)
+            );
+        } catch {}
+    }
+
+    function scheduleScanRefresh() {
+        if(state.scanState.refreshTimer)
+            return;
+        state.scanState.refreshTimer =
+            setTimeout(() => {
+                state.scanState.refreshTimer = null;
+                applyFilters();
+            }, 150);
     }
 
     function updateCardStatus(
@@ -4557,8 +5118,25 @@ const App = (() => {
 
     async function probeBatch(
         channels,
-        concurrency = 5
+        concurrency = 10
     ) {
+
+        if(!channels.length) {
+            state.scanState.running = false;
+            updateScanStatus("Working only");
+            return;
+        }
+
+        state.scanState.total =
+            channels.length;
+        state.scanState.scanned = 0;
+        state.scanState.running = true;
+
+        const controller =
+            new AbortController();
+
+        state.scanState.abort =
+            controller;
 
         let index = 0;
 
@@ -4568,14 +5146,35 @@ const App = (() => {
                 index < channels.length
             ) {
 
+                if(controller.signal.aborted)
+                    break;
+
                 const current =
                     channels[
                         index++
                     ];
 
-                await probeChannel(
-                    current
-                );
+                    state.scanState.active += 1;
+                    updateScanStatus("Testing streams");
+                    try {
+                        await probeWithRetry(
+                            current,
+                            controller.signal
+                        );
+                    } catch(error) {
+                        if(!controller.signal.aborted)
+                            console.debug(
+                                "Channel scan failed",
+                                error
+                            );
+                    } finally {
+                        state.scanState.active =
+                            Math.max(
+                                0,
+                                state.scanState.active - 1
+                            );
+                        updateScanStatus("Testing streams");
+                    }
 
             }
 
@@ -4594,6 +5193,94 @@ const App = (() => {
             )
         );
 
+        state.scanState.running = false;
+        state.scanState.abort = null;
+        updateScanStatus("Working only");
+
+        if(
+            state.workingOnly &&
+            !state.filtered.length
+        ) {
+            $("heroTitle").textContent =
+                "No working channels found";
+            $("heroDescription").textContent =
+                "No channel has validated as playable yet. Continue scanning or import more sources.";
+        }
+
+    }
+
+    function prioritizeScanChannels(channels) {
+
+        const visible =
+            new Set(
+                [...document.querySelectorAll(".card")]
+                    .map(card => card.dataset.id)
+            );
+        const currentCategory =
+            state.current?.category || state.filter;
+
+        return channels
+            .slice(0, 5000)
+            .map((channel,index) => ({
+                channel,
+                score:
+                    (visible.has(channel.id) ? 10000 : 0) +
+                    (state.favorites.has(channel.id) ? 5000 : 0) +
+                    (channel === state.current ? 3000 : 0) +
+                    (currentCategory !== "all" &&
+                        channel.category === currentCategory ? 1000 : 0) -
+                    index
+            }))
+            .sort((a,b) => b.score - a.score)
+            .map(item => item.channel);
+
+    }
+
+    async function probeWithRetry(channel, signal) {
+
+        const key =
+            channel.stream || channel.id;
+        const retry =
+            state.scanState.retries.get(key) || 0;
+
+        await probeChannel(channel, signal);
+
+        if(
+            channel.status === "failed" &&
+            retry < 1 &&
+            !signal.aborted
+        ) {
+            state.scanState.retries.set(key, retry + 1);
+            await waitForRetry(
+                250 * (2 ** retry),
+                signal
+            );
+            if(!signal.aborted)
+                await probeChannel(channel, signal);
+        }
+
+        if(!signal.aborted) {
+            state.scanState.scanned += 1;
+            updateScanStatus("Testing streams");
+        }
+
+    }
+
+    function waitForRetry(delay, signal) {
+
+        return new Promise((resolve,reject) => {
+            const timer = setTimeout(resolve, delay);
+            const cancel = () => {
+                clearTimeout(timer);
+                reject(new DOMException("scan cancelled", "AbortError"));
+            };
+            if(signal.aborted) {
+                cancel();
+                return;
+            }
+            signal.addEventListener("abort", cancel, {once:true});
+        });
+
     }
 
     /* ========================================================
@@ -4607,6 +5294,10 @@ const App = (() => {
         if(!channel)
             return;
 
+        state.lastFocusBeforePlayer =
+            document.activeElement;
+        state.lastPlaybackChannel =
+            channel;
         state.current =
             channel;
 
@@ -4624,15 +5315,32 @@ const App = (() => {
             channel.group ||
             "Live TV";
 
-        $("video").volume =
+        const volume =
             Number(
-                $("volume").value
+                localStorage.getItem(
+                    "xvynora-volume"
+                ) || state.volume || 0.8
             );
 
-        populateChannelDrawer();
+        state.volume =
+            volume;
+        $("volume").value =
+            String(volume);
+        $("video").volume =
+            volume;
+        $("video").muted =
+            false;
+        updateMuteIcon();
 
-        await playStream(
-            channel
+        populateChannelDrawer();
+        showPlayerHud();
+
+        playStream(channel).catch(
+            error =>
+                console.error(
+                    "IPTV playback error",
+                    error
+                )
         );
 
     }
@@ -4641,17 +5349,42 @@ const App = (() => {
         channel
     ) {
 
+        const session =
+            ++state.playbackSession;
+
+        if(state.playbackAbort)
+            state.playbackAbort.abort();
+
+        state.playbackAbort =
+            new AbortController();
+        state.attemptedStreams =
+            new Set();
+
         destroyHLS();
 
         const video =
             $("video");
 
-        const url =
-            normalizeUrl(
-                channel.stream
+        $("quality").disabled = true;
+        $("quality").innerHTML =
+            '<option value="-1">Auto</option>';
+
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+
+        const urls =
+            [
+                channel.stream,
+                ...(channel.stream_urls || [])
+            ]
+            .map(normalizeUrl)
+            .filter(
+                (url,index,values) =>
+                    url && values.indexOf(url) === index
             );
 
-        if(!url) {
+        if(!urls.length) {
 
             toast(
                 "This channel has no stream URL"
@@ -4661,7 +5394,137 @@ const App = (() => {
 
         }
 
-        try {
+        for(const url of urls) {
+
+            if(
+                session !== state.playbackSession ||
+                state.playbackAbort.signal.aborted
+            )
+                return;
+
+            if(state.attemptedStreams.has(url))
+                continue;
+
+            state.attemptedStreams.add(url);
+            channel.status = "probing";
+            updateCardStatus(channel);
+            $("playerProgram").textContent =
+                `Trying ${channel.title}… ${state.attemptedStreams.size}/${urls.length}`;
+
+            try {
+
+                await playStreamCandidate(
+                    channel,
+                    url,
+                    session,
+                    state.playbackAbort.signal
+                );
+
+                if(session !== state.playbackSession)
+                    return;
+
+                channel.status = "online";
+                updateCardStatus(channel);
+                return;
+
+            } catch(error) {
+
+                if(
+                    session !== state.playbackSession ||
+                    state.playbackAbort.signal.aborted
+                )
+                    return;
+
+                console.warn(
+                    "IPTV stream failed",
+                    error
+                );
+                destroyHLS();
+                video.pause();
+                video.removeAttribute("src");
+                video.load();
+                $("playerProgram").textContent =
+                    "Switching to backup stream…";
+
+            }
+
+        }
+
+        if(session !== state.playbackSession)
+            return;
+
+        channel.status = "failed";
+        updateCardStatus(channel);
+        toast("Stream unavailable");
+        $("playerProgram").textContent =
+            `${channel.title} unavailable`;
+
+    }
+
+    function playStreamCandidate(
+        channel,
+        url,
+        session,
+        signal
+    ) {
+
+        return new Promise(
+            (resolve,reject) => {
+
+                const video = $("video");
+                let settled = false;
+                let timer = null;
+
+                const clean = () => {
+                    clearTimeout(timer);
+                    video.removeEventListener("playing", onPlaying);
+                    video.removeEventListener("error", onError);
+                    signal.removeEventListener("abort", onAbort);
+                };
+
+                const finish = (error) => {
+                    if(settled)
+                        return;
+                    settled = true;
+                    clean();
+                    if(error)
+                        reject(error);
+                    else
+                        resolve();
+                };
+
+                const onPlaying = () => {
+                    if(session === state.playbackSession)
+                        finish();
+                };
+
+                const onError = () =>
+                    finish(new Error("media playback failed"));
+
+                const onAbort = () =>
+                    finish(new DOMException("Playback cancelled", "AbortError"));
+
+                if(signal.aborted) {
+                    onAbort();
+                    return;
+                }
+
+                video.addEventListener("playing", onPlaying);
+                video.addEventListener("error", onError);
+                signal.addEventListener("abort", onAbort, {once:true});
+                timer = setTimeout(
+                    () =>
+                        finish(new Error("playback timed out")),
+                    7000
+                );
+
+                const start = () => {
+                    if(session !== state.playbackSession) {
+                        onAbort();
+                        return;
+                    }
+                    video.play().catch(onError);
+                };
 
             if(
                 video.canPlayType(
@@ -4669,17 +5532,9 @@ const App = (() => {
                 )
             ) {
 
-                video.src =
-                    url;
-
-                await video.play();
-
-                channel.status =
-                    "online";
-
-                updateCardStatus(
-                    channel
-                );
+                    video.src = url;
+                    video.load();
+                    start();
 
             }
 
@@ -4719,19 +5574,13 @@ const App = (() => {
                     Hls.Events.MANIFEST_PARSED,
                     () => {
 
+                        if(session !== state.playbackSession) {
+                            finish(new Error("stale playback session"));
+                            return;
+                        }
+
                         populateQuality();
-
-                        video.play()
-                            .catch(
-                                () => {}
-                            );
-
-                        channel.status =
-                            "online";
-
-                        updateCardStatus(
-                            channel
-                        );
+                        start();
 
                     }
                 );
@@ -4743,6 +5592,9 @@ const App = (() => {
                         data
                     ) => {
 
+                        if(session !== state.playbackSession)
+                            return;
+
                         if(
                             data.fatal
                         ) {
@@ -4752,7 +5604,7 @@ const App = (() => {
                                 Hls.ErrorTypes.NETWORK_ERROR
                             ) {
 
-                                state.hls.startLoad();
+                                finish(new Error("network stream failure"));
 
                             }
 
@@ -4761,15 +5613,13 @@ const App = (() => {
                                 Hls.ErrorTypes.MEDIA_ERROR
                             ) {
 
-                                state.hls.recoverMediaError();
+                                finish(new Error("media stream failure"));
 
                             }
 
                             else {
 
-                                failover(
-                                    channel
-                                );
+                                finish(new Error("HLS stream failure"));
 
                             }
 
@@ -4782,36 +5632,14 @@ const App = (() => {
 
             else {
 
-                video.src =
-                    url;
-
-                await video.play();
-
-                channel.status =
-                    "online";
-
-                updateCardStatus(
-                    channel
-                );
+                video.src = url;
+                video.load();
+                start();
 
             }
 
-        } catch(error) {
-
-            console.error(error);
-
-            channel.status =
-                "failed";
-
-            updateCardStatus(
-                channel
-            );
-
-            failover(
-                channel
-            );
-
-        }
+            }
+        );
 
     }
 
@@ -4820,6 +5648,7 @@ const App = (() => {
         if(state.hls) {
 
             try {
+                state.hls.detachMedia();
                 state.hls.destroy();
             } catch {}
 
@@ -4840,6 +5669,8 @@ const App = (() => {
                 Auto
             </option>
         `;
+
+        select.disabled = !state.hls;
 
         if(!state.hls)
             return;
@@ -4930,13 +5761,13 @@ const App = (() => {
             state.hls;
 
         let bitrate =
-            "Unknown";
+            "N/A";
 
         let resolution =
-            "Unknown";
+            "N/A";
 
         let levels =
-            "Native";
+            "N/A";
 
         if(hls) {
 
@@ -4954,12 +5785,12 @@ const App = (() => {
                         ? `${Math.round(
                             level.bitrate / 1000
                         )} kbps`
-                        : "Unknown";
+                        : "N/A";
 
                 resolution =
                     level.height
                         ? `${level.height}p`
-                        : "Unknown";
+                        : "N/A";
 
             }
 
@@ -4979,6 +5810,34 @@ const App = (() => {
                         ${escapeHTML(
                             channel.title
                         )}
+                    </span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Source</span>
+                    <span class="info-value">
+                        ${escapeHTML(channel.source || "N/A")}
+                    </span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Provider</span>
+                    <span class="info-value">
+                        ${escapeHTML(channel.provider || "N/A")}
+                    </span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Country</span>
+                    <span class="info-value">
+                        ${escapeHTML(channel.country || "N/A")}
+                    </span>
+                </div>
+
+                <div class="info-row">
+                    <span class="info-label">Quality</span>
+                    <span class="info-value">
+                        ${escapeHTML(channel.quality || "N/A")}
                     </span>
                 </div>
 
@@ -5025,7 +5884,9 @@ const App = (() => {
                         Current Time
                     </span>
                     <span class="info-value">
-                        ${video.currentTime.toFixed(1)}s
+                        ${Number.isFinite(video.currentTime)
+                            ? video.currentTime.toFixed(1) + "s"
+                            : "N/A"}
                     </span>
                 </div>
             `;
@@ -5285,12 +6146,44 @@ const App = (() => {
             $("channelList");
 
         const channels =
-            state.filtered
-                .slice(0,100);
+            state.filtered.length
+                ? state.filtered
+                : state.channels;
 
-        list.innerHTML =
-            channels.map(
-                channel => `
+        state.drawerChannels = channels;
+
+        if(
+            !channels.length &&
+            state.workingOnly
+        ) {
+            list.innerHTML = `
+                <div class="empty-state">
+                    No working channels found
+                </div>
+            `;
+            return;
+        }
+
+        renderChannelDrawerWindow();
+
+    }
+
+    function renderChannelDrawerWindow() {
+
+        const list = $("channelList");
+        const channels = state.drawerChannels;
+        const itemHeight = 69;
+        const viewportHeight = list.clientHeight || 420;
+        const start = Math.max(
+            0,
+            Math.floor(list.scrollTop / itemHeight) - 3
+        );
+        const count = Math.ceil(viewportHeight / itemHeight) + 6;
+        const visible = channels.slice(start, start + count);
+
+        list.innerHTML = `
+            <div style="height:${start * itemHeight}px"></div>
+            ${visible.map(channel => `
 
                     <button
                         data-channel-id="${
@@ -5341,9 +6234,9 @@ const App = (() => {
 
                     </button>
 
-                `
-            )
-            .join("");
+                `).join("")}
+            <div style="height:${Math.max(0, (channels.length - start - visible.length) * itemHeight)}px"></div>
+        `;
 
     }
 
@@ -5394,6 +6287,11 @@ const App = (() => {
         id
     ) {
 
+        state.overlayFocus.set(
+            id,
+            document.activeElement
+        );
+
         $(id).classList.add(
             "open"
         );
@@ -5415,6 +6313,19 @@ const App = (() => {
             "open"
         );
 
+        const focus =
+            state.overlayFocus.get(id);
+
+        if(
+            focus &&
+            typeof focus.focus === "function"
+        )
+            requestAnimationFrame(
+                () => focus.focus()
+            );
+
+        state.overlayFocus.delete(id);
+
     }
 
     function closeAllOverlays() {
@@ -5428,6 +6339,80 @@ const App = (() => {
             id =>
                 closeOverlay(id)
         );
+
+    }
+
+    function toggleDrawer(
+        id,
+        focusId
+    ) {
+
+        const drawer = $(id);
+        const open = drawer.classList.toggle("open");
+
+        if(open) {
+            requestAnimationFrame(
+                () => focusablesIn(drawer)[0]?.focus()
+            );
+        } else {
+            requestAnimationFrame(
+                () => $(focusId)?.focus()
+            );
+        }
+
+    }
+
+    function smoothScrollBy(
+        container,
+        left,
+        top
+    ) {
+
+        if(!container)
+            return;
+
+        let motion =
+            state.scrollMotion.get(container);
+
+        if(!motion) {
+            motion = {
+                left: 0,
+                top: 0,
+                frame: 0
+            };
+            state.scrollMotion.set(
+                container,
+                motion
+            );
+        }
+
+        motion.left += left;
+        motion.top += top;
+
+        if(motion.frame)
+            return;
+
+        const tick = () => {
+            motion.left *= .72;
+            motion.top *= .72;
+
+            container.scrollLeft += motion.left;
+            container.scrollTop += motion.top;
+
+            if(
+                Math.abs(motion.left) > .25 ||
+                Math.abs(motion.top) > .25
+            ) {
+                motion.frame = requestAnimationFrame(tick);
+            } else {
+                motion.left = 0;
+                motion.top = 0;
+                motion.frame = 0;
+            }
+        };
+
+        motion.frame =
+            requestAnimationFrame(tick);
 
     }
 
@@ -5641,12 +6626,7 @@ const App = (() => {
                 state.workingOnly =
                     !state.workingOnly;
 
-                event.currentTarget
-                    .classList.toggle(
-                        "active",
-                        state.workingOnly
-                    );
-
+                updateWorkingOnlyChip();
                 applyFilters();
 
             };
@@ -5745,13 +6725,25 @@ const App = (() => {
                     $("video");
 
                 if(video.paused)
-                    video.play();
+                    video.play().catch(() => {});
                 else
                     video.pause();
 
                 updatePlayIcon();
 
             };
+
+        $("previousChannel")
+            .onclick =
+            () => switchChannel(-1);
+
+        $("nextChannel")
+            .onclick =
+            () => switchChannel(1);
+
+        $("playerGuide")
+            .onclick =
+            () => openOverlay("guideOverlay");
 
         $("seekBack")
             .onclick =
@@ -5785,6 +6777,16 @@ const App = (() => {
                 video.muted =
                     !video.muted;
 
+                state.volume =
+                    Number(
+                        video.volume || 0.8
+                    );
+
+                localStorage.setItem(
+                    "xvynora-volume",
+                    String(state.volume)
+                );
+
                 updateMuteIcon();
 
             };
@@ -5793,13 +6795,23 @@ const App = (() => {
             .oninput =
             event => {
 
-                $("video").volume =
+                const value =
                     Number(
                         event.target.value
                     );
 
+                $("video").volume =
+                    value;
+
                 $("video").muted =
-                    false;
+                    value === 0;
+
+                state.volume =
+                    value;
+                localStorage.setItem(
+                    "xvynora-volume",
+                    String(value)
+                );
 
                 updateMuteIcon();
 
@@ -5851,22 +6863,19 @@ const App = (() => {
         $("channels")
             .onclick =
             () =>
-                $("channelDrawer")
-                    .classList.toggle(
-                        "open"
-                    );
+                toggleDrawer(
+                    "channelDrawer",
+                    "channels"
+                );
 
         $("info")
             .onclick =
             () => {
-
-                $("infoDrawer")
-                    .classList.toggle(
-                        "open"
-                    );
-
+                toggleDrawer(
+                    "infoDrawer",
+                    "info"
+                );
                 updateStreamInfo();
-
             };
 
         document
@@ -5883,16 +6892,16 @@ const App = (() => {
                                 button.dataset.playerClose ===
                                 "drawer"
                             )
-                                $("channelDrawer")
-                                    .classList.remove(
-                                        "open"
-                                    );
+                                toggleDrawer(
+                                    "channelDrawer",
+                                    "channels"
+                                );
 
                             else
-                                $("infoDrawer")
-                                    .classList.remove(
-                                        "open"
-                                    );
+                                toggleDrawer(
+                                    "infoDrawer",
+                                    "info"
+                                );
 
                         };
 
@@ -5934,6 +6943,98 @@ const App = (() => {
 
                 }
             );
+
+        $("channelList")
+            .addEventListener(
+                "scroll",
+                () => {
+                    if(state.drawerRenderTimer)
+                        return;
+                    state.drawerRenderTimer =
+                        requestAnimationFrame(() => {
+                            state.drawerRenderTimer = null;
+                            renderChannelDrawerWindow();
+                        });
+                },
+                {passive:true}
+            );
+
+        $("video")
+            .addEventListener(
+                "volumechange",
+                () => {
+                    const v = $("video");
+                    state.volume = Number(v.volume || 0);
+                    localStorage.setItem(
+                        "xvynora-volume",
+                        String(state.volume)
+                    );
+                    $("volume").value = String(v.volume || 0);
+                    updateMuteIcon();
+                }
+            );
+
+        $("video")
+            .addEventListener(
+                "waiting",
+                () => {
+                    if(state.current) {
+                        state.current.status = "buffering";
+                        updateCardStatus(state.current);
+                    }
+                    $("playerProgram").textContent = "Buffering…";
+                }
+            );
+
+        $("video")
+            .addEventListener(
+                "stalled",
+                () => {
+                    if(state.current) {
+                        state.current.status = "buffering";
+                        updateCardStatus(state.current);
+                    }
+                    $("playerProgram").textContent = "Buffering…";
+                }
+            );
+
+        $("video")
+            .addEventListener(
+                "playing",
+                () => {
+                    if(state.current)
+                        state.current.status = "online";
+                    if(state.current)
+                        updateCardStatus(state.current);
+                    if(state.current)
+                        $("playerProgram").textContent =
+                            state.current.now?.title ||
+                            state.current.group ||
+                            "Live TV";
+                }
+            );
+
+        window.addEventListener(
+            "offline",
+            () => {
+                if(state.current)
+                    state.current.status = "buffering";
+                if(state.current)
+                    updateCardStatus(state.current);
+                if($("player").classList.contains("open"))
+                    $("playerProgram").textContent =
+                        "Network connection lost";
+                toast("Network connection lost");
+            }
+        );
+
+        window.addEventListener(
+            "online",
+            () => {
+                if($("player").classList.contains("open"))
+                    $("playerProgram").textContent = "Network restored";
+            }
+        );
 
         document
             .querySelectorAll(
@@ -6016,9 +7117,65 @@ const App = (() => {
             handleKeyboard
         );
 
+        $("video").addEventListener(
+            "click",
+            () => {
+
+                if(
+                    $("player")
+                        .classList
+                        .contains("open")
+                ) {
+                    const hud =
+                        $("playerHud");
+
+                    if(hud.classList.contains("hidden"))
+                        showPlayerHud();
+                    else
+                        hidePlayerHud();
+                }
+
+            }
+        );
+
+        $("video").addEventListener(
+            "dblclick",
+            async () => {
+
+                if(
+                    document.fullscreenElement
+                ) {
+                    await document.exitFullscreen().catch(() => {});
+                } else {
+                    await $("player").requestFullscreen().catch(() => {});
+                }
+
+            }
+        );
+
+        $("player").addEventListener(
+            "mousemove",
+            () => {
+                if($("player").classList.contains("open"))
+                    showPlayerHud();
+            },
+            {passive:true}
+        );
+
         document.addEventListener(
             "click",
             event => {
+
+                if(
+                    event.target.closest(
+                        ".overlay"
+                    ) &&
+                    !event.target.closest(
+                        ".glass-panel, .search-panel, .panel-close, .nav-button, .filter-chip, button, input, select"
+                    )
+                ) {
+                    closeAllOverlays();
+                }
 
                 const program =
                     event.target.closest(
@@ -6044,6 +7201,37 @@ const App = (() => {
                 }
 
             }
+        );
+
+        document.addEventListener(
+            "wheel",
+            event => {
+                const target = event.target;
+                const drawer = target.closest("#channelList");
+                const guide = target.closest(".guide-container");
+                const results = target.closest(".search-results");
+                const shelf = target.closest(".shelf-viewport");
+                const scale = event.deltaMode === 1 ? 16 : 1;
+                const deltaX = event.deltaX * scale;
+                const deltaY = event.deltaY * scale;
+
+                if(drawer || guide || results) {
+                    event.preventDefault();
+                    const container = drawer || guide || results;
+                    smoothScrollBy(container, deltaX, deltaY);
+                    return;
+                }
+
+                if(shelf) {
+                    event.preventDefault();
+                    smoothScrollBy(
+                        shelf,
+                        deltaX || deltaY,
+                        0
+                    );
+                }
+            },
+            { passive: false }
         );
 
         $("video")
@@ -6075,18 +7263,7 @@ const App = (() => {
                 "error",
                 () => {
 
-                    if(state.current) {
-                        state.current.status =
-                            "failed";
-
-                        updateCardStatus(
-                            state.current
-                        );
-
-                        failover(
-                            state.current
-                        );
-                    }
+                    updatePlayIcon();
 
                 }
             );
@@ -6228,9 +7405,54 @@ const App = (() => {
 
     }
 
+    function showPlayerHud() {
+
+        const hud =
+            $("playerHud");
+
+        hud.classList.remove("hidden");
+
+        clearTimeout(
+            state.playerHudTimer
+        );
+
+        state.playerHudTimer =
+            setTimeout(
+                () =>
+                    hidePlayerHud(),
+                3500
+            );
+
+    }
+
+    function hidePlayerHud() {
+
+        const hud =
+            $("playerHud");
+
+        if(
+            !hud ||
+            document.querySelector(
+                ".overlay.open"
+            )
+        )
+            return;
+
+        hud.classList.add("hidden");
+
+    }
+
     function handleKeyboard(
         event
     ) {
+
+        state.remoteMode = true;
+        $("app").classList.add("remote-mode");
+
+        const key =
+            event.key || event.code;
+        const code =
+            event.code || "";
 
         const playerOpen =
             $("player")
@@ -6242,11 +7464,15 @@ const App = (() => {
                 ".overlay.open"
             );
 
+        const drawerOpen =
+            $("channelDrawer").classList.contains("open") ||
+            $("infoDrawer").classList.contains("open");
+
         if(
-            event.key ===
-            "Escape" ||
-            event.key ===
-            "Backspace"
+            key === "Escape" ||
+            key === "Backspace" ||
+            code === "BrowserBack" ||
+            key === "BrowserBack"
         ) {
 
             if(
@@ -6259,8 +7485,31 @@ const App = (() => {
             }
 
             if(
+                drawerOpen
+            ) {
+
+                if($("channelDrawer").classList.contains("open"))
+                    toggleDrawer("channelDrawer", "channels");
+                if($("infoDrawer").classList.contains("open"))
+                    toggleDrawer("infoDrawer", "info");
+                return;
+
+            }
+
+            if(
                 playerOpen
             ) {
+
+                const hud =
+                    $("playerHud");
+
+                if(
+                    hud &&
+                    !hud.classList.contains("hidden")
+                ) {
+                    hidePlayerHud();
+                    return;
+                }
 
                 closePlayer();
                 return;
@@ -6276,13 +7525,28 @@ const App = (() => {
         ) {
 
             if(
+                modalOpen.id === "guideOverlay" &&
+                (key === "ArrowLeft" || key === "ArrowRight")
+            ) {
+                event.preventDefault();
+                state.guideOffset +=
+                    key === "ArrowRight" ? 1 : -1;
+                state.guideOffset = Math.max(
+                    -24,
+                    Math.min(24, state.guideOffset)
+                );
+                updateGuide();
+                return;
+            }
+
+            if(
                 [
                     "ArrowLeft",
                     "ArrowRight",
                     "ArrowUp",
                     "ArrowDown"
                 ].includes(
-                    event.key
+                    key
                 )
             ) {
 
@@ -6295,8 +7559,8 @@ const App = (() => {
             }
 
             else if(
-                event.key ===
-                "Enter"
+                key === "Enter" ||
+                key === "NumpadEnter"
             ) {
 
                 const active =
@@ -6320,68 +7584,185 @@ const App = (() => {
             return;
         }
 
+        if(drawerOpen) {
+
+            if(
+                [
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "ArrowUp",
+                    "ArrowDown"
+                ].includes(key)
+            ) {
+                event.preventDefault();
+                moveSpatialFocus(
+                    $("channelDrawer"),
+                    key
+                );
+            }
+            else if(
+                key === "Enter" ||
+                key === "NumpadEnter"
+            ) {
+                event.preventDefault();
+                document.activeElement?.click();
+            }
+
+            return;
+
+        }
+
         if(
             playerOpen
         ) {
 
             if(
-                event.key ===
-                "ArrowLeft"
+                code === "MediaNextTrack" ||
+                key === "MediaNextTrack"
+            ) {
+                event.preventDefault();
+                switchChannel(1);
+                return;
+            }
+
+            if(
+                code === "MediaPreviousTrack" ||
+                key === "MediaPreviousTrack"
+            ) {
+                event.preventDefault();
+                switchChannel(-1);
+                return;
+            }
+
+            if(
+                key === "ArrowLeft"
             ) {
 
                 event.preventDefault();
-
-                $("video").currentTime -=
-                    10;
+                showPlayerHud();
+                $("video").currentTime -= 10;
 
             }
 
             else if(
-                event.key ===
-                "ArrowRight"
+                key === "ArrowRight"
             ) {
 
                 event.preventDefault();
-
-                $("video").currentTime +=
-                    10;
+                showPlayerHud();
+                $("video").currentTime += 10;
 
             }
 
             else if(
-                event.key ===
-                "ArrowUp"
+                key === "ArrowUp"
             ) {
 
                 event.preventDefault();
-
-                switchChannel(
-                    -1
-                );
+                showPlayerHud();
+                switchChannel(-1);
 
             }
 
             else if(
-                event.key ===
-                "ArrowDown"
+                key === "ArrowDown"
             ) {
 
                 event.preventDefault();
-
-                switchChannel(
-                    1
-                );
+                showPlayerHud();
+                switchChannel(1);
 
             }
 
             else if(
-                event.key ===
-                " "
+                key === "Enter" ||
+                key === "NumpadEnter" ||
+                key === " " ||
+                code === "MediaPlayPause"
             ) {
 
                 event.preventDefault();
-
+                showPlayerHud();
                 $("playerPlay").click();
+
+            }
+
+            else if(
+                code === "MediaPlay" ||
+                key === "p" ||
+                key === "P"
+            ) {
+                event.preventDefault();
+                $("video").play().catch(() => {});
+            }
+
+            else if(
+                code === "MediaPause" ||
+                key === "k" ||
+                key === "K"
+            ) {
+                event.preventDefault();
+                $("video").pause();
+            }
+
+            else if(
+                code === "AudioVolumeUp" ||
+                key === "AudioVolumeUp" ||
+                key === "+"
+            ) {
+                event.preventDefault();
+                const next = Math.min(1, $("video").volume + 0.1);
+                $("video").volume = next;
+                $("video").muted = false;
+                $("volume").value = String(next);
+                updateMuteIcon();
+            }
+
+            else if(
+                code === "AudioVolumeDown" ||
+                key === "AudioVolumeDown" ||
+                key === "-"
+            ) {
+                event.preventDefault();
+                const next = Math.max(0, $("video").volume - 0.1);
+                $("video").volume = next;
+                $("video").muted = next === 0;
+                $("volume").value = String(next);
+                updateMuteIcon();
+            }
+
+            else if(
+                code === "AudioVolumeMute" ||
+                key === "AudioVolumeMute" ||
+                key === "m" ||
+                key === "M"
+            ) {
+
+                event.preventDefault();
+                $("mute").click();
+
+            }
+
+            else if(
+                code === "MediaStop" ||
+                key === "MediaStop"
+            ) {
+
+                event.preventDefault();
+                closePlayer();
+
+            }
+
+            else if(
+                key === "f" ||
+                key === "F"
+            ) {
+
+                event.preventDefault();
+                if(document.fullscreenElement)
+                    document.exitFullscreen();
+                else
+                    $("player").requestFullscreen().catch(() => {});
 
             }
 
@@ -6390,7 +7771,7 @@ const App = (() => {
         }
 
         switch(
-            event.key
+            key
         ) {
 
             case "ArrowLeft":
@@ -6438,6 +7819,7 @@ const App = (() => {
                 break;
 
             case "Enter":
+            case "NumpadEnter":
 
                 event.preventDefault();
 
@@ -6499,31 +7881,44 @@ const App = (() => {
         if(!state.current)
             return;
 
+        const pool =
+            state.channels.filter(
+                channel =>
+                    channel.status === "online"
+            );
+
+        if(!pool.length)
+            return;
+
         const index =
-            state.filtered.findIndex(
+            pool.findIndex(
                 channel =>
                     channel.id ===
                     state.current.id
             );
 
-        if(index < 0)
-            return;
+        const start =
+            index >= 0 ? index : 0;
 
-        const next =
-            state.filtered[
-                Math.max(
-                    0,
-                    Math.min(
-                        state.filtered.length - 1,
-                        index + direction
-                    )
-                )
-            ];
+        for(
+            let offset = 1;
+            offset <= pool.length;
+            offset++
+        ) {
 
-        if(next)
-            openPlayer(
-                next
-            );
+            const nextIndex =
+                (start + direction * offset + pool.length) %
+                pool.length;
+
+            const next =
+                pool[nextIndex];
+
+            if(next && next.id !== state.current.id) {
+                openPlayer(next);
+                return;
+            }
+
+        }
 
     }
 
@@ -6586,6 +7981,13 @@ const App = (() => {
 
     function closePlayer() {
 
+        ++state.playbackSession;
+
+        if(state.playbackAbort) {
+            state.playbackAbort.abort();
+            state.playbackAbort = null;
+        }
+
         stopRecording();
 
         destroyHLS();
@@ -6616,8 +8018,23 @@ const App = (() => {
                 "open"
             );
 
-        state.current =
-            null;
+        hidePlayerHud();
+
+        if(
+            state.lastPlaybackChannel
+        )
+            state.current =
+                state.lastPlaybackChannel;
+
+        if(
+            state.lastFocusBeforePlayer &&
+            typeof state.lastFocusBeforePlayer.focus === "function"
+        ) {
+            requestAnimationFrame(
+                () =>
+                    state.lastFocusBeforePlayer.focus()
+            );
+        }
 
     }
 
@@ -6629,13 +8046,17 @@ const App = (() => {
         query
     ) {
 
+        const container =
+            $("searchResults");
+        const scrollTop =
+            container.scrollTop;
+        const scrollLeft =
+            container.scrollLeft;
+
         const results =
             searchChannels(
                 query
             );
-
-        const container =
-            $("searchResults");
 
         container.innerHTML = "";
 
@@ -6669,6 +8090,13 @@ const App = (() => {
             fragment
         );
 
+        requestAnimationFrame(
+            () => {
+                container.scrollTop = scrollTop;
+                container.scrollLeft = scrollLeft;
+            }
+        );
+
     }
 
     /* ========================================================
@@ -6680,6 +8108,25 @@ const App = (() => {
         bindEvents();
 
         lucide.createIcons();
+
+        const savedVolume =
+            Number(
+                localStorage.getItem(
+                    "xvynora-volume"
+                ) || "0.8"
+            );
+
+        state.volume =
+            Number.isFinite(savedVolume)
+                ? savedVolume
+                : 0.8;
+
+        $("video").volume =
+            state.volume;
+        $("volume").value =
+            String(state.volume);
+        updateMuteIcon();
+        updateWorkingOnlyChip();
 
         loadThreadfinChannels();
 
@@ -6700,6 +8147,103 @@ const App = (() => {
 })();
 
 App.init();
+</script>
+
+
+
+<script>
+/* XVYNORA: preload real IPTV-org catalogue */
+(async () => {
+  try {
+    const sources = [
+      "https://iptv-org.github.io/iptv/channels.json",
+      "https://iptv-org.github.io/iptv/streams.json"
+    ];
+
+    const [channelsRes, streamsRes] = await Promise.all(
+      sources.map(u => fetch(u, {cache:"no-store"}))
+    );
+
+    if (!channelsRes.ok || !streamsRes.ok) throw new Error("IPTV-org unavailable");
+
+    const [channels, streams] = await Promise.all([
+      channelsRes.json(),
+      streamsRes.json()
+    ]);
+
+    const streamMap = new Map();
+
+    for (const stream of streams) {
+      const id = String(stream.channel || "").trim();
+      const url = String(stream.url || "").trim();
+      if (!id || !url) continue;
+
+      if (!streamMap.has(id)) streamMap.set(id, []);
+      streamMap.get(id).push(stream);
+    }
+
+    const realChannels = channels
+      .map(ch => {
+        const id = String(ch.id || "").trim();
+        const mirrors = streamMap.get(id) || [];
+        const stream = mirrors.find(x => /^https?:\/\//i.test(x.url));
+
+        if (!stream) return null;
+
+        return {
+          id,
+          title: ch.name || id,
+          name: ch.name || id,
+          logo: ch.logo || "",
+          country: ch.country || "",
+          language: Array.isArray(ch.languages) ? ch.languages.join(", ") : (ch.languages || ""),
+          group: ch.categories?.[0] || "Live TV",
+          category: ch.categories?.[0] || "Live TV",
+          stream: stream.url,
+          url: stream.url,
+          source: "IPTV-org",
+          health: "unknown",
+          status: "unknown",
+          quality: stream.quality || "",
+          tvgId: id
+        };
+      })
+      .filter(Boolean);
+
+    window.XVYNORA_IPTV_ORG_CHANNELS = realChannels;
+
+    /* Feed the existing application's channel collection when available. */
+    if (Array.isArray(window.channels)) {
+      window.channels.push(...realChannels);
+    } else {
+      window.channels = realChannels;
+    }
+
+    if (typeof mergeChannels === "function") {
+      try { mergeChannels(realChannels); } catch (_) {}
+    }
+
+    if (typeof renderShelves === "function") {
+      try { renderShelves(); } catch (_) {}
+    }
+
+    if (typeof renderSearch === "function") {
+      try { renderSearch(); } catch (_) {}
+    }
+
+    if (typeof buildSearchIndex === "function") {
+      try { buildSearchIndex(); } catch (_) {}
+    }
+
+    if (typeof toast === "function") {
+      toast(`${realChannels.length.toLocaleString()} IPTV-org channels loaded`);
+    }
+
+    console.log(`[XVYNORA] Loaded ${realChannels.length} real IPTV-org channels`);
+  } catch (err) {
+    console.error("[XVYNORA] IPTV-org catalogue failed:", err);
+  }
+})();
 </script>
 
 </body>
