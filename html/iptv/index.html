@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2870,7 +2869,7 @@ const App = (() => {
             "online"
                 ? "online"
                 : channel.status ===
-                  "offline"
+                  "failed"
                     ? "offline"
                     : "probing";
 
@@ -3040,9 +3039,10 @@ const App = (() => {
     function renderShelves() {
 
         const channels =
-            state.filtered.length
-                ? state.filtered
-                : state.channels;
+            state.filter === "all" &&
+            !state.workingOnly
+                ? state.channels
+                : state.filtered;
 
         const featured =
             channels.slice(0,40);
@@ -3072,30 +3072,60 @@ const App = (() => {
                     )
             );
 
+        const rows = [];
+
+        if(favorites.length) {
+
+            renderRow(
+                $("favoritesRow"),
+                favorites,
+                rows.length
+            );
+
+            rows.push(
+                favorites
+            );
+
+        } else {
+
+            $("favoritesRow")
+                .innerHTML = "";
+
+        }
+
         renderRow(
             $("featuredRow"),
             featured,
-            0
+            rows.length
+        );
+
+        rows.push(
+            featured
         );
 
         renderRow(
             $("liveRow"),
             live,
-            1
+            rows.length
         );
+
+        rows.push(
+            live
+        );
+
+        const sportsRow =
+            sports.length
+                ? sports
+                : [];
 
         renderRow(
             $("sportsRow"),
-            sports.length
-                ? sports
-                : live,
-            2
+            sportsRow,
+            rows.length
         );
 
-        renderRow(
-            $("favoritesRow"),
-            favorites,
-            0
+        rows.push(
+            sportsRow
         );
 
         $("favoritesShelf").hidden =
@@ -3117,13 +3147,21 @@ const App = (() => {
             .textContent =
             `${favorites.length} channels`;
 
-        state.rows = [
-            featured,
-            live,
-            sports.length
-                ? sports
-                : live
-        ];
+        state.rows =
+            rows.filter(
+                row =>
+                    row.length
+            );
+
+        if(
+            !state.rows.length
+        ) {
+
+            state.row = 0;
+            state.col = 0;
+            return;
+
+        }
 
         state.row =
             Math.min(
@@ -3511,36 +3549,212 @@ const App = (() => {
        IPTV-ORG
        ======================================================== */
 
-    async function loadIPTVOrg() {
+    async function api(
+        path,
+        options = {}
+    ) {
+
+        const response =
+            await fetch(
+                `/xvynora/api/${path}`,
+                options
+            );
+
+        const data =
+            await response.json();
+
+        if(
+            !response.ok ||
+            data.status === false
+        )
+            throw new Error(
+                data.error ||
+                `HTTP ${response.status}`
+            );
+
+        return data;
+
+    }
+
+    async function postJSON(
+        path,
+        body = {}
+    ) {
+
+        return api(
+            path,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body:
+                    JSON.stringify(body)
+            }
+        );
+
+    }
+
+    function normalizeChannel(
+        channel
+    ) {
+
+        return {
+
+            id:
+                channel.id ||
+                createId(
+                    (
+                        channel.title ||
+                        channel.name ||
+                        ""
+                    ) +
+                    (
+                        channel.stream ||
+                        ""
+                    )
+                ),
+
+            title:
+                channel.title ||
+                channel.name ||
+                "Unknown Channel",
+
+            stream:
+                channel.stream || "",
+
+            threadfinUrl:
+                channel.threadfin_url || "",
+
+            logo:
+                channel.logo || "",
+
+            group:
+                channel.group ||
+                channel.category ||
+                "Live TV",
+
+            category:
+                channel.category ||
+                channel.group ||
+                "Live TV",
+
+            language:
+                channel.language || "",
+
+            country:
+                channel.country || "",
+
+            tvgId:
+                channel.tvgId ||
+                channel.epg_id ||
+                "",
+
+            quality:
+                channel.quality || "",
+
+            status:
+                channel.status ||
+                channel.health ||
+                "unknown",
+
+            source:
+                channel.source || "",
+
+            skySports:
+                !!channel.sky_sports,
+
+            description:
+                channel.description ||
+                channel.now?.title ||
+                channel.group ||
+                "Live television.",
+
+            now:
+                channel.now || null,
+
+            next:
+                channel.next || null,
+
+            programs:
+                channel.now
+                    ? [channel.now]
+                    : []
+
+        };
+
+    }
+
+    async function loadThreadfinChannels() {
 
         toast(
-            "Loading IPTV-org playlist…"
+            "Loading channels…"
         );
 
         try {
 
-            const response =
-                await fetch(
-                    "https://iptv-org.github.io/iptv/index.m3u"
+            const result =
+                await api(
+                    "channels"
                 );
 
-            if(!response.ok)
-                throw new Error(
-                    `HTTP ${response.status}`
+            state.channels =
+                (
+                    result.channels ||
+                    []
+                ).map(
+                    normalizeChannel
                 );
 
-            const text =
-                await response.text();
+            applyFilters();
 
-            const parsed =
-                parseM3U(text);
+            const first =
+                state.channels[0];
 
-            mergeChannels(
-                parsed
-            );
+            if(first) {
 
-            toast(
-                `${parsed.length.toLocaleString()} IPTV-org channels loaded`
+                updateHero(
+                    first
+                );
+
+                requestAnimationFrame(
+                    () => {
+                        const firstCard =
+                            document.querySelector(
+                                ".card"
+                            );
+
+                        if(firstCard)
+                            focusCard(
+                                firstCard
+                            );
+                    }
+                );
+
+                toast(
+                    `${state.channels.length.toLocaleString()} channels ready`
+                );
+
+            } else {
+
+                $("heroTitle")
+                    .textContent =
+                    "No channels available";
+
+                $("heroDescription")
+                    .textContent =
+                    "Import IPTV-org or add an M3U source to populate Threadfin.";
+
+                toast(
+                    "No channels available"
+                );
+
+            }
+
+            probeBatch(
+                state.channels.slice(0,80),
+                4
             );
 
         } catch(error) {
@@ -3548,7 +3762,41 @@ const App = (() => {
             console.error(error);
 
             toast(
-                "Unable to load IPTV-org from this browser. CORS/network access may be blocked."
+                "Unable to load Threadfin channels"
+            );
+
+        }
+
+    }
+
+    async function loadIPTVOrg() {
+
+        toast(
+            "Importing IPTV-org sources…"
+        );
+
+        try {
+
+            await postJSON(
+                "import",
+                {
+                    source: "all"
+                }
+            );
+
+            await loadThreadfinChannels();
+
+            toast(
+                "IPTV-org sources imported"
+            );
+
+        } catch(error) {
+
+            console.error(error);
+
+            toast(
+                error.message ||
+                "Unable to import IPTV-org sources"
             );
 
         }
@@ -3653,15 +3901,21 @@ const App = (() => {
             const text =
                 await file.text();
 
-            const parsed =
-                parseM3U(text);
-
-            mergeChannels(
-                parsed
+            await postJSON(
+                "upload",
+                {
+                    name:
+                        file.name ||
+                        "XVynora Upload",
+                    content:
+                        text
+                }
             );
 
+            await loadThreadfinChannels();
+
             toast(
-                `${parsed.length.toLocaleString()} channels imported`
+                "Uploaded M3U imported"
             );
 
         } catch(error) {
@@ -3669,7 +3923,8 @@ const App = (() => {
             console.error(error);
 
             toast(
-                "Playlist could not be parsed"
+                error.message ||
+                "Playlist could not be imported"
             );
 
         }
@@ -4092,6 +4347,48 @@ const App = (() => {
                     )
                     : [];
 
+            if(
+                !programs.length &&
+                channel.now
+            ) {
+
+                programs.push(
+                    {
+                        ...channel.now,
+                        start:
+                            Date.parse(
+                                channel.now.start
+                            ),
+                        stop:
+                            Date.parse(
+                                channel.now.stop
+                            )
+                    }
+                );
+
+            }
+
+            if(
+                !programs.length &&
+                channel.next
+            ) {
+
+                programs.push(
+                    {
+                        ...channel.next,
+                        start:
+                            Date.parse(
+                                channel.next.start
+                            ),
+                        stop:
+                            Date.parse(
+                                channel.next.stop
+                            )
+                    }
+                );
+
+            }
+
             for(
                 let slot = 0;
                 slot < 6;
@@ -4191,20 +4488,13 @@ const App = (() => {
                     5000
                 );
 
-            /*
-             * CORS can prevent HEAD from succeeding even
-             * when the actual stream works. Therefore a
-             * successful request is positive evidence, while
-             * failure is not automatically proof of a dead
-             * stream.
-             */
-
             const response =
                 await fetch(
-                    channel.stream,
+                    "/xvynora/api/probe?channel=" +
+                    encodeURIComponent(
+                        channel.id
+                    ),
                     {
-                        method: "HEAD",
-                        mode: "cors",
                         signal:
                             controller.signal,
                         cache: "no-store"
@@ -4215,15 +4505,17 @@ const App = (() => {
                 timer
             );
 
+            const result =
+                await response.json();
+
             channel.status =
-                response.ok
-                    ? "online"
-                    : "offline";
+                result.health ||
+                "unknown";
 
         } catch {
 
             channel.status =
-                "offline";
+                "unknown";
 
         }
 
@@ -4253,7 +4545,7 @@ const App = (() => {
                             "online"
                                 ? "online"
                                 : channel.status ===
-                                  "offline"
+                                  "failed"
                                     ? "offline"
                                     : "probing"
                         );
@@ -4328,6 +4620,7 @@ const App = (() => {
 
         $("playerProgram")
             .textContent =
+            channel.now?.title ||
             channel.group ||
             "Live TV";
 
@@ -4381,6 +4674,13 @@ const App = (() => {
 
                 await video.play();
 
+                channel.status =
+                    "online";
+
+                updateCardStatus(
+                    channel
+                );
+
             }
 
             else if(
@@ -4425,6 +4725,13 @@ const App = (() => {
                             .catch(
                                 () => {}
                             );
+
+                        channel.status =
+                            "online";
+
+                        updateCardStatus(
+                            channel
+                        );
 
                     }
                 );
@@ -4480,6 +4787,13 @@ const App = (() => {
 
                 await video.play();
 
+                channel.status =
+                    "online";
+
+                updateCardStatus(
+                    channel
+                );
+
             }
 
         } catch(error) {
@@ -4487,7 +4801,7 @@ const App = (() => {
             console.error(error);
 
             channel.status =
-                "offline";
+                "failed";
 
             updateCardStatus(
                 channel
@@ -5084,6 +5398,13 @@ const App = (() => {
             "open"
         );
 
+        requestAnimationFrame(
+            () =>
+                focusablesIn(
+                    $(id)
+                )[0]?.focus()
+        );
+
     }
 
     function closeOverlay(
@@ -5186,26 +5507,23 @@ const App = (() => {
 
                 try {
 
-                    const response =
-                        await fetch(
-                            url
-                        );
-
-                    if(!response.ok)
-                        throw new Error();
-
-                    const text =
-                        await response.text();
-
-                    const parsed =
-                        parseM3U(text);
-
-                    mergeChannels(
-                        parsed
+                    await postJSON(
+                        "import",
+                        {
+                            url,
+                            epg:
+                                $("epgUrl")
+                                    .value
+                                    .trim(),
+                            name:
+                                "XVynora M3U"
+                        }
                     );
 
+                    await loadThreadfinChannels();
+
                     toast(
-                        `${parsed.length.toLocaleString()} channels loaded`
+                        "M3U source imported"
                     );
 
                 } catch(error) {
@@ -5213,7 +5531,8 @@ const App = (() => {
                     console.error(error);
 
                     toast(
-                        "Could not load M3U. The remote server may block browser CORS requests."
+                        error.message ||
+                        "Could not import M3U source"
                     );
 
                 }
@@ -5222,11 +5541,59 @@ const App = (() => {
 
         $("loadXtream")
             .onclick =
-            loadXtream;
+            () =>
+                toast(
+                    "Xtream is not available as a native Threadfin provider"
+                );
 
         $("loadEPG")
             .onclick =
-            loadEPG;
+            async () => {
+
+                const url =
+                    $("epgUrl")
+                        .value
+                        .trim();
+
+                if(!url) {
+
+                    toast(
+                        "Enter an XMLTV URL"
+                    );
+
+                    return;
+
+                }
+
+                try {
+
+                    await postJSON(
+                        "import",
+                        {
+                            epg: url,
+                            name:
+                                "XVynora XMLTV"
+                        }
+                    );
+
+                    await loadThreadfinChannels();
+
+                    toast(
+                        "EPG source imported"
+                    );
+
+                } catch(error) {
+
+                    console.error(error);
+
+                    toast(
+                        error.message ||
+                        "EPG could not be imported"
+                    );
+
+                }
+
+            };
 
         $("m3uFile")
             .onchange =
@@ -5237,19 +5604,33 @@ const App = (() => {
 
         $("clearChannels")
             .onclick =
-            () => {
+            async () => {
 
-                state.channels =
-                    [];
+                try {
 
-                state.filtered =
-                    [];
+                    await postJSON(
+                        "remove",
+                        {
+                            source: "all"
+                        }
+                    );
 
-                renderShelves();
+                    await loadThreadfinChannels();
 
-                toast(
-                    "Playlist cleared"
-                );
+                    toast(
+                        "IPTV-org sources removed"
+                    );
+
+                } catch(error) {
+
+                    console.error(error);
+
+                    toast(
+                        error.message ||
+                        "Sources could not be removed"
+                    );
+
+                }
 
             };
 
@@ -5639,14 +6020,15 @@ const App = (() => {
             "click",
             event => {
 
-                if(
-                    event.target
-                        .classList
-                        .contains("guide-program")
-                ) {
+                const program =
+                    event.target.closest(
+                        ".guide-program"
+                    );
+
+                if(program) {
 
                     const id =
-                        event.target.dataset.stream;
+                        program.dataset.stream;
 
                     const channel =
                         state.channels.find(
@@ -5693,10 +6075,18 @@ const App = (() => {
                 "error",
                 () => {
 
-                    if(state.current)
+                    if(state.current) {
+                        state.current.status =
+                            "failed";
+
+                        updateCardStatus(
+                            state.current
+                        );
+
                         failover(
                             state.current
                         );
+                    }
 
                 }
             );
@@ -5706,6 +6096,137 @@ const App = (() => {
     /* ========================================================
        KEYBOARD
        ======================================================== */
+
+    function focusablesIn(
+        root
+    ) {
+
+        return [
+            ...root.querySelectorAll(
+                "button,input,select,[tabindex]:not([tabindex='-1'])"
+            )
+        ].filter(
+            element =>
+                !element.disabled &&
+                element.offsetParent !== null
+        );
+
+    }
+
+    function moveSpatialFocus(
+        root,
+        key
+    ) {
+
+        const items =
+            focusablesIn(root);
+
+        if(!items.length)
+            return;
+
+        const active =
+            root.contains(
+                document.activeElement
+            )
+                ? document.activeElement
+                : items[0];
+
+        if(
+            document.activeElement !==
+            active
+        ) {
+
+            active.focus();
+            return;
+
+        }
+
+        const rect =
+            active.getBoundingClientRect();
+
+        const cx =
+            rect.left +
+            rect.width / 2;
+
+        const cy =
+            rect.top +
+            rect.height / 2;
+
+        const direction =
+            {
+                ArrowLeft: [-1,0],
+                ArrowRight: [1,0],
+                ArrowUp: [0,-1],
+                ArrowDown: [0,1]
+            }[key];
+
+        if(!direction)
+            return;
+
+        let best = null;
+        let bestScore = Infinity;
+
+        for(const item of items) {
+
+            if(item === active)
+                continue;
+
+            const itemRect =
+                item.getBoundingClientRect();
+
+            const ix =
+                itemRect.left +
+                itemRect.width / 2;
+
+            const iy =
+                itemRect.top +
+                itemRect.height / 2;
+
+            const dx =
+                ix - cx;
+
+            const dy =
+                iy - cy;
+
+            if(
+                direction[0] &&
+                Math.sign(dx) !== direction[0]
+            )
+                continue;
+
+            if(
+                direction[1] &&
+                Math.sign(dy) !== direction[1]
+            )
+                continue;
+
+            const primary =
+                direction[0]
+                    ? Math.abs(dx)
+                    : Math.abs(dy);
+
+            const secondary =
+                direction[0]
+                    ? Math.abs(dy)
+                    : Math.abs(dx);
+
+            const score =
+                primary +
+                secondary * 1.8;
+
+            if(score < bestScore) {
+
+                bestScore = score;
+                best = item;
+
+            }
+
+        }
+
+        if(best)
+            best.focus();
+
+    }
 
     function handleKeyboard(
         event
@@ -5752,8 +6273,52 @@ const App = (() => {
 
         if(
             modalOpen
-        )
+        ) {
+
+            if(
+                [
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "ArrowUp",
+                    "ArrowDown"
+                ].includes(
+                    event.key
+                )
+            ) {
+
+                event.preventDefault();
+                moveSpatialFocus(
+                    modalOpen,
+                    event.key
+                );
+
+            }
+
+            else if(
+                event.key ===
+                "Enter"
+            ) {
+
+                const active =
+                    document.activeElement;
+
+                if(
+                    active &&
+                    active !==
+                    document.body &&
+                    active.tagName !==
+                    "INPUT"
+                ) {
+
+                    event.preventDefault();
+                    active.click();
+
+                }
+
+            }
+
             return;
+        }
 
         if(
             playerOpen
@@ -5880,6 +6445,18 @@ const App = (() => {
                     openPlayer(
                         state.current
                     );
+
+                break;
+
+            case "Home":
+
+                event.preventDefault();
+
+                document
+                    .querySelector(
+                        ".nav-button"
+                    )
+                    ?.focus();
 
                 break;
 
@@ -6095,108 +6672,6 @@ const App = (() => {
     }
 
     /* ========================================================
-       SAMPLE / FALLBACK DATA
-       ======================================================== */
-
-    function seedDemoData() {
-
-        if(
-            state.channels.length
-        )
-            return;
-
-        const demo = [
-
-            {
-                id:"demo-bbc-one",
-                title:"BBC One",
-                stream:"",
-                logo:"",
-                group:"UK",
-                category:"UK",
-                language:"English",
-                country:"UK",
-                quality:"1080p",
-                status:"unknown",
-                description:
-                    "BBC One live television.",
-                programs:[]
-            },
-
-            {
-                id:"demo-bbc-news",
-                title:"BBC News",
-                stream:"",
-                logo:"",
-                group:"News",
-                category:"News",
-                language:"English",
-                country:"UK",
-                quality:"1080p",
-                status:"unknown",
-                description:
-                    "Live news coverage.",
-                programs:[]
-            },
-
-            {
-                id:"demo-sky-sports",
-                title:"Sky Sports News",
-                stream:"",
-                logo:"",
-                group:"Sports",
-                category:"Sports",
-                language:"English",
-                country:"UK",
-                quality:"1080p",
-                status:"unknown",
-                description:
-                    "Live sports news and analysis.",
-                programs:[]
-            },
-
-            {
-                id:"demo-geo",
-                title:"Geo News",
-                stream:"",
-                logo:"",
-                group:"Pakistan",
-                category:"Pakistan",
-                language:"Urdu",
-                country:"Pakistan",
-                quality:"1080p",
-                status:"unknown",
-                description:
-                    "Pakistani news and current affairs.",
-                programs:[]
-            },
-
-            {
-                id:"demo-ptv",
-                title:"PTV Home",
-                stream:"",
-                logo:"",
-                group:"Pakistan",
-                category:"Pakistan",
-                language:"Urdu",
-                country:"Pakistan",
-                quality:"720p",
-                status:"unknown",
-                description:
-                    "Pakistan Television.",
-                programs:[]
-            }
-
-        ];
-
-        state.channels =
-            demo;
-
-        applyFilters();
-
-    }
-
-    /* ========================================================
        STARTUP
        ======================================================== */
 
@@ -6206,14 +6681,7 @@ const App = (() => {
 
         lucide.createIcons();
 
-        seedDemoData();
-
-        /*
-         * The real XVynora integration should inject the
-         * Threadfin/IPTV-org dataset here through the existing
-         * /xvynora/api/ endpoint rather than requiring the
-         * browser to download a giant playlist directly.
-         */
+        loadThreadfinChannels();
 
         setInterval(
             updateStreamInfo,
@@ -6236,4 +6704,3 @@ App.init();
 
 </body>
 </html>
-```
